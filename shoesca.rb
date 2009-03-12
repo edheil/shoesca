@@ -22,7 +22,7 @@ class RaccdocClient < Shoes
       username, password = store['username'], store['password']
     end
 
-    stack :width => 600, :margin => 50 do
+    stack :width => 700, :margin => 50 do
       background salmon, :curve => 20
       border black, :curve => 20
       title "Login"
@@ -44,7 +44,7 @@ class RaccdocClient < Shoes
 
   def main
     visit '/login' unless @@bbs
-    stack :width => 600, :margin => 50 do
+    stack :width => 700, :margin => 50 do
       background aliceblue, :curve => 20
       border black, :curve => 20
       title "Forums"
@@ -65,13 +65,14 @@ class RaccdocClient < Shoes
   def forum(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
-    stack :width => 600, :margin => 50 do
+    stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
-      title "#{id}> #{@forum.name}"
+      title "#{@forum.name}>"
       para "Admin is #{@forum.admin}."
-      para link("back", :click => "/")
-      para link("post", :click => "/new_post/#{id}")
+      para( link("back", :click => "/"),
+            " ",
+            link("post", :click => "/new_post/#{id}") )
       @posts = @forum.post_headers
       @post_ids = @posts.keys.sort.reverse
       @post_ids.each do | post_id |
@@ -89,15 +90,32 @@ class RaccdocClient < Shoes
 
   def message(forum_id,msgnum)
     visit '/login' unless @@bbs
-    @post = @@bbs.jump(forum_id).read(msgnum)
-    stack :width => 600, :margin => 50 do
+    @forum =  @@bbs.jump(forum_id)
+    post_ids = @forum.post_headers.keys.sort.reverse
+    post_index = post_ids.index(msgnum)
+    msg_prev = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
+    msg_next = post_ids[post_index - 1] if post_index > 0
+    info post_ids.inspect
+    info msgnum
+    info msg_prev
+    info msg_next
+    @post = @forum.read(msgnum)
+    stack :width => 700, :margin => 50 do
       background gold, :curve => 20
       border black, :curve => 10
-      title "#{msgnum} #{@post.date} #{@post.author}>"
-      para link("back", :click => "/forum/#{forum_id}")
-      para link("reply", :click => "/new_reply/#{forum_id}/#{msgnum}")
+      title "Message"
+      tagline "#{@post.date} from #{@post.author}"
       para @post.body
-      para @post.inspect
+      tagline "[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
+      para( if msg_next; link("next", :click => "/message/#{forum_id}/#{msg_next}"); end,
+            " ",
+            if msg_prev; link("previous", :click => "/message/#{forum_id}/#{msg_prev}"); end,
+            " ",
+            link("forum", :click => "/forum/#{forum_id}"),
+            " ",
+            link("reply", :click => "/new_reply/#{forum_id}/#{msgnum}") )
+      
+#      para @post.inspect
     end
   end
 
@@ -105,12 +123,13 @@ class RaccdocClient < Shoes
     visit '/login' unless @@bbs
     @post = @@bbs.jump(forum_id).read(msgnum)
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
-    stack :width => 600, :margin => 50 do
+    quote = "#{@post.author} wrote:\n#{old_body}\n\n"
+    stack :width => 700, :margin => 50 do
       background lime, :curve => 20
       border black, :curve => 10
       title "New Post"
       para link("back", :click => "/forum/#{forum_id}")
-      @post_box = edit_box old_body, :width => 500, :height => 300
+      @post_box = edit_box quote, :width => 500, :height => 300
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
@@ -122,7 +141,7 @@ class RaccdocClient < Shoes
   
   def new_post(forum_id)
     visit '/login' unless @@bbs
-    stack :width => 600, :margin => 50 do
+    stack :width => 700, :margin => 50 do
       background lime, :curve => 20
       border black, :curve => 10
       title "New Post"
@@ -137,4 +156,4 @@ class RaccdocClient < Shoes
   end
 end
 
-Shoes.app :width => 700
+Shoes.app :width => 800
