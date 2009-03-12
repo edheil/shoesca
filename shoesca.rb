@@ -37,7 +37,10 @@ class RaccdocClient < Shoes
         store.transaction do
           store['username'], store['password'] = username, password
         end
-        @@bbs = Raccdoc::Connection.new(:user => username, :password => password)
+        @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
+                                        :host => '64.198.88.46', # bbs.iscabbs.com was not resolving
+                                        :port => 6145
+                                        )
         visit '/'
       end
     end
@@ -48,7 +51,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background aliceblue, :curve => 20
       border black, :curve => 20
-      title "Forums"
+      title  link(link("Forums", :click => "/"))
       forums = @@bbs.forums
       ordered_ids = forums.keys.sort { |a,b| forums[a][:name] <=> forums[b][:name] }
       ordered_ids.each do | id |
@@ -69,11 +72,10 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
-      title "#{@forum.name}>"
+      title( link(link("Forums", :click => "/")), " / ", 
+             link( "#{@forum.name}>", :click => "/forum/#{id}") )
       para "Admin is #{@forum.admin}."
-      para( link("back", :click => "/"),
-            " ",
-            link("post", :click => "/new_post/#{id}") )
+      para( link("post", :click => "/new_post/#{id}") )
       @posts = @forum.post_headers
       @post_ids = @posts.keys.sort.reverse
       @post_ids.each do | post_id |
@@ -104,15 +106,17 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background gold, :curve => 20
       border black, :curve => 10
-      title "Message"
+      title (link("Forums", :click => "/"), 
+             " / ", 
+             link("#{@forum.name}>", :click => "/forum/#{forum_id}"), 
+             " / ",
+             link("#{msgnum}", :click => "/message/#{forum_id}/#{msgnum}"))
       tagline "#{@post.date} from #{@post.author}"
       para @post.body
       tagline "[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
       para( if msg_next; link("next", :click => "/message/#{forum_id}/#{msg_next}"); end,
             " ",
             if msg_prev; link("previous", :click => "/message/#{forum_id}/#{msg_prev}"); end,
-            " ",
-            link("forum", :click => "/forum/#{forum_id}"),
             " ",
             link("reply", :click => "/new_reply/#{forum_id}/#{msgnum}") )
       
