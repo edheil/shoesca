@@ -1,4 +1,5 @@
 Shoes.setup do
+  Gem.sources = ['http://gems.github.com/', 'http://gems.rubyforge.org/']
   gem 'minter-raccdoc'
 end
 
