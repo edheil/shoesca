@@ -11,6 +11,7 @@ class RaccdocClient < Shoes
   url '/', :main
   url '/login', :login
   url '/forum/(\d+)', :forum
+  url '/foruminfo/(\d+)', :foruminfo
   url '/message/(\d+)/(\d+)', :message
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
@@ -26,7 +27,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background salmon, :curve => 20
       border black, :curve => 20
-      title "Login"
+      tagline "Login"
       para "username:"
       @username_line = edit_line "#{ username }"
       para "password:"
@@ -51,8 +52,10 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background aliceblue, :curve => 20
       border black, :curve => 20
-      title  link(link("Forums", :click => "/"))
+      tagline  link(link("Forums", :click => "/"))
       forums = @@bbs.forums
+      #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
+      #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
       ordered_ids = forums.keys.sort { |a,b| forums[a][:name] <=> forums[b][:name] }
       ordered_ids.each do | id |
         data = forums[id]
@@ -69,13 +72,15 @@ class RaccdocClient < Shoes
   def forum(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
+    
     stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
-      title( link(link("Forums", :click => "/")), " / ", 
+      tagline( link(link("Forums", :click => "/")), " / ", 
              link( "#{@forum.name}>", :click => "/forum/#{id}") )
       para "Admin is #{@forum.admin}."
-      para( link("post", :click => "/new_post/#{id}") )
+      para( link("post", :click => "/new_post/#{id}"), " ",
+            link("info", :click => "/foruminfo/#{id}") )
       @posts = @forum.post_headers
       @post_ids = @posts.keys.sort.reverse
       @post_ids.each do | post_id |
@@ -88,6 +93,28 @@ class RaccdocClient < Shoes
         end
       end
 
+    end
+  end
+
+  def foruminfo(id)
+    visit '/login' unless @@bbs
+    @forum = @@bbs.jump(id)
+    
+    stack :width => 700, :margin => 50 do
+      background blanchedalmond, :curve => 20
+      border black, :curve => 20
+      tagline( link(link("Forums", :click => "/")), " / ", 
+               link( "#{@forum.name}>", :click => "/forum/#{id}") )
+      para( link("post", :click => "/new_post/#{id}") )
+      @info = @forum.forum_information
+      info @info.inspect
+      stack :width => 0.90 do
+        background lightgrey, :curve => 10
+        border black, :curve => 10
+        caption "Forum moderator is #{@forum.admin}.  Total messages: #{@forum.noteids.last}."
+        caption "Forum info last updated #{@info[:date]} by Mikemike"
+        para "#{@info[:body]}"
+      end
     end
   end
 
@@ -106,7 +133,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background gold, :curve => 20
       border black, :curve => 10
-      title (link("Forums", :click => "/"), 
+      tagline (link("Forums", :click => "/"), 
              " / ", 
              link("#{@forum.name}>", :click => "/forum/#{forum_id}"), 
              " / ",
@@ -132,7 +159,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background lime, :curve => 20
       border black, :curve => 10
-      title "New Post"
+      tagline "New Post"
       para link("back", :click => "/forum/#{forum_id}")
       @post_box = edit_box quote, :width => 500, :height => 300
       button "post" do
@@ -149,7 +176,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background lime, :curve => 20
       border black, :curve => 10
-      title "New Post"
+      tagline "New Post"
       para link("back", :click => "/forum/#{forum_id}")
       @post_box = edit_box :width => 500, :height => 300
       button "post" do
