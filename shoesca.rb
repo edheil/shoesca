@@ -9,6 +9,7 @@ require 'yaml/store'
 class RaccdocClient < Shoes
 
   url '/', :main
+  url '/forums/(\w+)', :forums
   url '/login', :login
   url '/forum/(\d+)', :forum
   url '/foruminfo/(\d+)', :foruminfo
@@ -42,21 +43,35 @@ class RaccdocClient < Shoes
                                         :host => '64.198.88.46', # bbs.iscabbs.com was not resolving
                                         :port => 6145
                                         )
-        visit '/'
+        visit '/forums/joined'
       end
     end
   end
 
   def main
+    if @bbs
+      visit '/forums/joined'
+    else
+      visit '/login'
+    end
+  end
+
+  def forums( forumarg='todo')
     visit '/login' unless @@bbs
+    forums = @@bbs.forums(forumarg)
+    forums.delete(1)
+#    forumargs = %w[ all joined public private todo named threads ]
+    forumargs = %w[ todo joined all ]
     stack :width => 700, :margin => 50 do
       background aliceblue, :curve => 20
       border black, :curve => 20
-      tagline  link(link("Forums", :click => "/"))
-      forums = @@bbs.forums
+      tagline  link(link("Forums", :click => "/forums"))
+      tagline *forumargs.map{ |arg| [ link( "#{arg}.", :click => "/forums/#{arg}"), " "] }.flatten
+
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
       #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
-      ordered_ids = forums.keys.sort { |a,b| forums[a][:name] <=> forums[b][:name] }
+#      ordered_ids = forums.keys.sort { |a,b| forums[a][:name] <=> forums[b][:name] }
+      ordered_ids = forums.keys.sort
       ordered_ids.each do | id |
         data = forums[id]
         stack :width => 0.90, :margin => 3 do
@@ -76,7 +91,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
-      tagline( link(link("Forums", :click => "/")), " / ", 
+      tagline( link(link("Forums", :click => "/forums")), " / ", 
              link( "#{@forum.name}>", :click => "/forum/#{id}") )
       para "Admin is #{@forum.admin}."
       para( link("post", :click => "/new_post/#{id}"), " ",
@@ -103,7 +118,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
-      tagline( link(link("Forums", :click => "/")), " / ", 
+      tagline( link(link("Forums", :click => "/forums")), " / ", 
                link( "#{@forum.name}>", :click => "/forum/#{id}") )
       para( link("post", :click => "/new_post/#{id}") )
       @info = @forum.forum_information
@@ -133,7 +148,7 @@ class RaccdocClient < Shoes
     stack :width => 700, :margin => 50 do
       background gold, :curve => 20
       border black, :curve => 10
-      tagline (link("Forums", :click => "/"), 
+      tagline (link("Forums", :click => "/forums"), 
              " / ", 
              link("#{@forum.name}>", :click => "/forum/#{forum_id}"), 
              " / ",
