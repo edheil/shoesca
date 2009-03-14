@@ -18,33 +18,59 @@ class RaccdocClient < Shoes
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs = nil
 
-  def login
-    store = YAML::Store.new('bbsconfig.yaml')
-    username, password = nil, nil
-    store.transaction(true) do
-      username, password = store['username'], store['password']
+  def login(error=nil)
+    @store = YAML::Store.new('bbsconfig.yaml')
+    @username, @password = nil, nil
+    @store.transaction(true) do
+      @username, @password = @store['username'], @store['password']
     end
 
-    stack :width => 700, :margin => 50 do
+    def do_login
+      @username = @username_line.text
+      @password = @password_line.text
+      begin
+        @@bbs = Raccdoc::Connection.new(:user => @username, :password => @password,
+                                        :host => '64.198.88.46', # bbs.iscabbs.com was not resolving
+                                        :port => 6145
+                                        )
+      rescue RuntimeError => err
+        debug "error: #{err.message}"
+        @@bbs = nil
+        @mainstack.append do
+          para err.message
+        end
+      end
+      if @@bbs
+        @store.transaction do
+          @store['username'], @store['password'] = @username, @password
+        end
+        visit '/forums/joined'
+      end
+    end
+
+
+    @mainstack = stack :width => 700, :margin => 50 do
       background salmon, :curve => 20
       border black, :curve => 20
       tagline "Login"
       para "username:"
-      @username_line = edit_line "#{ username }"
+      @username_line = edit_line "#{ @username }"
       para "password:"
-      @password_line = edit_line "#{ password }", :secret => true
+      @password_line = edit_line "#{ @password }", :secret => true
+
+
+
       button "login" do
-        username = @username_line.text
-        password = @password_line.text
-        store.transaction do
-          store['username'], store['password'] = username, password
-        end
-        @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
-                                        :host => '64.198.88.46', # bbs.iscabbs.com was not resolving
-                                        :port => 6145
-                                        )
-        visit '/forums/joined'
+        do_login
       end
+
+      keypress do | key |
+        if key == "\n"
+          do_login
+        end
+      end
+
+
     end
   end
 
@@ -59,8 +85,13 @@ class RaccdocClient < Shoes
   def forums( forumarg='todo')
     visit '/login' unless @@bbs
     forums = @@bbs.forums(forumarg)
+
+    # filter out Mail, which doesn't work yet.
     forums.delete(1)
-#    forumargs = %w[ all joined public private todo named threads ]
+
+    # also available, but not used: public, private
+    # not supported by isca: named, threads
+
     forumargs = %w[ todo joined all ]
     stack :width => 700, :margin => 50 do
       background aliceblue, :curve => 20
@@ -70,9 +101,8 @@ class RaccdocClient < Shoes
 
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
       #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
-#      ordered_ids = forums.keys.sort { |a,b| forums[a][:name] <=> forums[b][:name] }
-      ordered_ids = forums.keys.sort
-      ordered_ids.each do | id |
+      @ordered_ids = forums.keys.sort
+      @ordered_ids.each do | id |
         data = forums[id]
         stack :width => 0.90, :margin => 3 do
           background lightgrey, :curve => 10
@@ -82,8 +112,23 @@ class RaccdocClient < Shoes
         end
       end
     end
-  end
 
+    keypress do | key |
+      if key == ' '
+        if forumarg == 'todo'
+          if @ordered_ids.length > 0
+            unread_forum = @ordered_ids[0]
+            visit "/forum/#{unread_forum}"
+          else
+            visit "/forums/todo"
+          end
+        else
+          visit '/forums/todo'
+        end
+      end
+    end
+  end
+  
   def forum(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
