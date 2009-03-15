@@ -15,6 +15,7 @@ class RaccdocClient < Shoes
   url '/foruminfo/(\d+)', :foruminfo
   url '/first_unread/(\d+)', :first_unread
   url '/message/(\d+)/(\d+)', :message
+  url '/mark_unread/(\d+)/(\d+)', :mark_unread
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs = nil
@@ -133,7 +134,7 @@ class RaccdocClient < Shoes
   def forum(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
-    first_unread = @forum.first_unread
+    first_unread = @forum.first_unread.to_i
     info "first_unread: #{first_unread}"
     stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
@@ -142,11 +143,17 @@ class RaccdocClient < Shoes
              link( "#{@forum.name}>", :click => "/forum/#{id}") )
       para "Admin is #{@forum.admin}."
       para( link("post", :click => "/new_post/#{id}"), " ",
-            link("info", :click => "/foruminfo/#{id}") )
+            link("info", :click => "/foruminfo/#{id}") , " ",
+            link("first unread", :click => "/first_unread/#{id}")
+            )
       @posts = @forum.post_headers
-      @post_ids = @posts.keys.sort.reverse
-      @post_ids.each do | post_id |
-        post = @posts[post_id]
+      noteids = @forum.noteids.sort
+      msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
+      msgs_read = noteids.select { |msg| msg.to_i < first_unread }
+      ordered_ids = msgs_unread + msgs_read
+
+      ordered_ids.each do | post_id |
+        post = @posts[post_id.to_s]
         stack :width => 0.90 do
           if post_id >= first_unread
             background ivory, :curve => 10
@@ -161,11 +168,9 @@ class RaccdocClient < Shoes
     end
     keypress do | key |
       if key == " "
+        visit "/first_unread/#{id}"
       end
     end
-
-
-
   end
 
   def foruminfo(id)
@@ -191,20 +196,39 @@ class RaccdocClient < Shoes
   end
 
   def first_unread(forum_id)
+    visit '/login' unless @@bbs
+    @forum =  @@bbs.jump(forum_id)
+    first_unread_msg = @forum.first_unread.to_i
+    first_unread_found = @forum.noteids.sort.detect { |noteid| noteid >= first_unread_msg }
+    info "first_unread_found:  #{first_unread_found.inspect}"
+    if first_unread_found
+      visit "/message/#{forum_id}/#{first_unread_found}"
+    else
+      visit "/forums"
+    end
+  end
 
+  def mark_unread(forum_id,msgnum)
+    visit '/login' unless @@bbs
+    @forum =  @@bbs.jump(forum_id)
+    first_unread_msg = @forum.first_unread.to_i
+    if msgnum.to_i < first_unread_msg
+      @forum.first_unread = msgnum
+    end
+    visit "/forum/#{forum_id}"
   end
 
   def message(forum_id,msgnum)
     visit '/login' unless @@bbs
     @forum =  @@bbs.jump(forum_id)
+    first_unread_msg = @forum.first_unread.to_i
+    if msgnum.to_i >= first_unread_msg
+      @forum.first_unread = msgnum.to_i + 1
+    end
     post_ids = @forum.post_headers.keys.sort.reverse
     post_index = post_ids.index(msgnum)
     msg_prev = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
     msg_next = post_ids[post_index - 1] if post_index > 0
-    info post_ids.inspect
-    info msgnum
-    info msg_prev
-    info msg_next
     @post = @forum.read(msgnum)
     stack :width => 700, :margin => 50 do
       background gold, :curve => 20
@@ -214,17 +238,27 @@ class RaccdocClient < Shoes
              link("#{@forum.name}>", :click => "/forum/#{forum_id}"), 
              " / ",
              link("#{msgnum}", :click => "/message/#{forum_id}/#{msgnum}"))
-      tagline "#{@post.date} from #{@post.author}"
-      para @post.body
-      tagline "[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
+      @whole_message = "#{@post.date} from #{@post.author}\n#{@post.body}[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
+      para @whole_message
       para( if msg_next; link("next", :click => "/message/#{forum_id}/#{msg_next}"); end,
             " ",
             if msg_prev; link("previous", :click => "/message/#{forum_id}/#{msg_prev}"); end,
             " ",
-            link("reply", :click => "/new_reply/#{forum_id}/#{msgnum}") )
+            link("reply", :click => "/new_reply/#{forum_id}/#{msgnum}"),
+            " ",
+            link("mark unread", :click => "/mark_unread/#{forum_id}/#{msgnum}"),
+            "  ",
+            link("copy post to clipboard") { self.clipboard=@whole_message; info @whole_message   }
+            )
       
 #      para @post.inspect
     end
+    keypress do | key |
+      if key == " "
+        visit "/first_unread/#{forum_id}"
+      end
+    end
+
   end
 
   def new_reply(forum_id, msgnum)
