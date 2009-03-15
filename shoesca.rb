@@ -9,10 +9,11 @@ require 'yaml/store'
 class RaccdocClient < Shoes
 
   url '/', :main
-  url '/forums/(\w+)', :forums
+  url '/forums', :forums
   url '/login', :login
   url '/forum/(\d+)', :forum
   url '/foruminfo/(\d+)', :foruminfo
+  url '/first_unread/(\d+)', :first_unread
   url '/message/(\d+)/(\d+)', :message
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
@@ -44,7 +45,7 @@ class RaccdocClient < Shoes
         @store.transaction do
           @store['username'], @store['password'] = @username, @password
         end
-        visit '/forums/joined'
+        visit '/forums'
       end
     end
 
@@ -58,8 +59,6 @@ class RaccdocClient < Shoes
       para "password:"
       @password_line = edit_line "#{ @password }", :secret => true
 
-
-
       button "login" do
         do_login
       end
@@ -69,61 +68,63 @@ class RaccdocClient < Shoes
           do_login
         end
       end
-
-
+#      if @username and @password
+#        do_login
+#      end
     end
   end
 
   def main
-    if @bbs
-      visit '/forums/joined'
+    if @@bbs
+      visit '/forums'
     else
       visit '/login'
     end
   end
 
-  def forums( forumarg='todo')
+  def forums
     visit '/login' unless @@bbs
-    forums = @@bbs.forums(forumarg)
 
-    # filter out Mail, which doesn't work yet.
+    forums = @@bbs.forums('all')
+    forums_todo = (@@bbs.forums('todo').to_a.map{ |k| k[0] } - [1]).sort
+    forums_joined = (@@bbs.forums('joined').to_a.map{ |k| k[0]} - forums_todo - [1]).sort
+    forums_all = (forums.to_a.map{ |k| k[0]} - forums_joined - forums_todo - [1]).sort
+    forums_todo.each { |n| forums[n][:todo] = true }
+    forums_joined.each { |n| forums[n][:joined] = true }
+
+    # delete mail
     forums.delete(1)
 
-    # also available, but not used: public, private
-    # not supported by isca: named, threads
-
-    forumargs = %w[ todo joined all ]
     stack :width => 700, :margin => 50 do
       background aliceblue, :curve => 20
       border black, :curve => 20
       tagline  link(link("Forums", :click => "/forums"))
-      tagline *forumargs.map{ |arg| [ link( "#{arg}.", :click => "/forums/#{arg}"), " "] }.flatten
 
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
       #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
-      @ordered_ids = forums.keys.sort
+      @ordered_ids = forums_todo + forums_joined + forums_all
       @ordered_ids.each do | id |
         data = forums[id]
         stack :width => 0.90, :margin => 3 do
-          background lightgrey, :curve => 10
+          if data[:todo]
+            background ivory, :curve => 10
+          elsif data[:joined]
+            background lightgrey, :curve => 10
+          else
+            background darkslateblue, :curve => 10
+          end
           border black, :curve => 10
           para link("#{id}> #{data[:name]}", :click => "/forum/#{id}")
-#          para "#{data.inspect}"
         end
       end
     end
 
     keypress do | key |
       if key == ' '
-        if forumarg == 'todo'
-          if @ordered_ids.length > 0
-            unread_forum = @ordered_ids[0]
-            visit "/forum/#{unread_forum}"
-          else
-            visit "/forums/todo"
-          end
+        if forums_todo.length > 0
+          visit "/forum/#{forums_todo[0]}"
         else
-          visit '/forums/todo'
+          visit '/forums'
         end
       end
     end
@@ -132,7 +133,8 @@ class RaccdocClient < Shoes
   def forum(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
-    
+    first_unread = @forum.first_unread
+    info "first_unread: #{first_unread}"
     stack :width => 700, :margin => 50 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
@@ -146,14 +148,24 @@ class RaccdocClient < Shoes
       @post_ids.each do | post_id |
         post = @posts[post_id]
         stack :width => 0.90 do
-          background lightgrey, :curve => 10
+          if post_id >= first_unread
+            background ivory, :curve => 10
+          else
+            background lightgrey, :curve => 10
+          end
           border black, :curve => 10
           para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}")
           para post[:subject]
         end
       end
-
     end
+    keypress do | key |
+      if key == " "
+      end
+    end
+
+
+
   end
 
   def foruminfo(id)
@@ -176,6 +188,10 @@ class RaccdocClient < Shoes
         para "#{@info[:body]}"
       end
     end
+  end
+
+  def first_unread(forum_id)
+
   end
 
   def message(forum_id,msgnum)
