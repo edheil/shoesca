@@ -7,6 +7,7 @@ require 'raccdoc'
 require 'yaml/store'
 
 class RaccdocClient < Shoes
+  STACKSTYLE = { :width => 650, :margin => 20 }
 
   url '/', :main
   url '/forums', :forums
@@ -51,7 +52,7 @@ class RaccdocClient < Shoes
     end
 
 
-    @mainstack = stack :width => 700, :margin => 50 do
+    @mainstack = stack STACKSTYLE do
       background salmon, :curve => 20
       border black, :curve => 20
       tagline "Login"
@@ -96,26 +97,37 @@ class RaccdocClient < Shoes
     # delete mail
     forums.delete(1)
 
-    stack :width => 700, :margin => 50 do
+    stack STACKSTYLE do
       background aliceblue, :curve => 20
       border black, :curve => 20
       tagline  link(link("Forums", :click => "/forums"))
 
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
       #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
-      @ordered_ids = forums_todo + forums_joined + forums_all
-      @ordered_ids.each do | id |
-        data = forums[id]
-        stack :width => 0.90, :margin => 3 do
-          if data[:todo]
-            background ivory, :curve => 10
-          elsif data[:joined]
-            background lightgrey, :curve => 10
-          else
-            background darkslateblue, :curve => 10
+      [ ["Unread", forums_todo],
+        ["Subscribed", forums_joined],
+        ["Zapped", forums_all]].each do | pair |
+        group_name, ordered_ids = *pair
+        if ordered_ids.length > 0
+          stack STACKSTYLE do
+            background white, :curve => 20
+            border black, :curve => 20
+            caption group_name
+            ordered_ids.each do | id |
+              data = forums[id]
+              stack STACKSTYLE do
+                if data[:todo]
+                  background ivory, :curve => 10
+                elsif data[:joined]
+                  background lightgrey, :curve => 10
+                else
+                  background darkslateblue, :curve => 10
+                end
+                border black, :curve => 10
+                para link("#{id}> #{data[:name]}", :click => "/forum/#{id}")
+              end
+            end
           end
-          border black, :curve => 10
-          para link("#{id}> #{data[:name]}", :click => "/forum/#{id}")
         end
       end
     end
@@ -136,7 +148,7 @@ class RaccdocClient < Shoes
     @forum = @@bbs.jump(id)
     first_unread = @forum.first_unread.to_i
     info "first_unread: #{first_unread}"
-    stack :width => 700, :margin => 50 do
+    stack STACKSTYLE do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       tagline( link(link("Forums", :click => "/forums")), " / ", 
@@ -150,19 +162,28 @@ class RaccdocClient < Shoes
       noteids = @forum.noteids.sort
       msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
       msgs_read = noteids.select { |msg| msg.to_i < first_unread }
-      ordered_ids = msgs_unread + msgs_read
-
-      ordered_ids.each do | post_id |
-        post = @posts[post_id.to_s]
-        stack :width => 0.90 do
-          if post_id >= first_unread
-            background ivory, :curve => 10
-          else
-            background lightgrey, :curve => 10
+      [ [ "Unread", msgs_unread ],
+        [ "Read", msgs_read ] ].each do | pair |
+        group_name, ordered_ids = *pair
+        if ordered_ids.length > 0
+          stack STACKSTYLE do
+            background white, :curve => 20
+            border black, :curve => 20
+            caption group_name
+            ordered_ids.each do | post_id |
+              post = @posts[post_id.to_s]
+              stack STACKSTYLE do
+                if post_id >= first_unread
+                  background ivory, :curve => 10
+                else
+                  background lightgrey, :curve => 10
+                end
+                border black, :curve => 10
+                para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}")
+                para post[:subject]
+              end
+            end
           end
-          border black, :curve => 10
-          para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}")
-          para post[:subject]
         end
       end
     end
@@ -177,7 +198,7 @@ class RaccdocClient < Shoes
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
     
-    stack :width => 700, :margin => 50 do
+    stack STACKSTYLE do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       tagline( link(link("Forums", :click => "/forums")), " / ", 
@@ -185,7 +206,7 @@ class RaccdocClient < Shoes
       para( link("post", :click => "/new_post/#{id}") )
       @info = @forum.forum_information
       info @info.inspect
-      stack :width => 0.90 do
+      stack STACKSTYLE do
         background lightgrey, :curve => 10
         border black, :curve => 10
         caption "Forum moderator is #{@forum.admin}.  Total messages: #{@forum.noteids.last}."
@@ -230,16 +251,16 @@ class RaccdocClient < Shoes
     msg_prev = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
     msg_next = post_ids[post_index - 1] if post_index > 0
     @post = @forum.read(msgnum)
-    stack :width => 700, :margin => 50 do
+    stack STACKSTYLE do
       background gold, :curve => 20
-      border black, :curve => 10
+      border black, :curve => 20
       tagline (link("Forums", :click => "/forums"), 
              " / ", 
              link("#{@forum.name}>", :click => "/forum/#{forum_id}"), 
              " / ",
              link("#{msgnum}", :click => "/message/#{forum_id}/#{msgnum}"))
       @whole_message = "#{@post.date} from #{@post.author}\n#{@post.body}[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
-      para @whole_message
+
       para( if msg_next; link("next", :click => "/message/#{forum_id}/#{msg_next}"); end,
             " ",
             if msg_prev; link("previous", :click => "/message/#{forum_id}/#{msg_prev}"); end,
@@ -248,9 +269,13 @@ class RaccdocClient < Shoes
             " ",
             link("mark unread", :click => "/mark_unread/#{forum_id}/#{msgnum}"),
             "  ",
-            link("copy post to clipboard") { self.clipboard=@whole_message; info @whole_message   }
+            link("copy post to clipboard") { self.clipboard=@whole_message; info @whole_message }
             )
-      
+      stack STACKSTYLE do
+        background aliceblue, :curve => 20
+        border black, :curve => 20
+        para @whole_message
+      end      
 #      para @post.inspect
     end
     keypress do | key |
@@ -266,7 +291,7 @@ class RaccdocClient < Shoes
     @post = @@bbs.jump(forum_id).read(msgnum)
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
     quote = "#{@post.author} wrote:\n#{old_body}\n\n"
-    stack :width => 700, :margin => 50 do
+    stack STACKSTYLE do
       background lime, :curve => 20
       border black, :curve => 10
       tagline "New Post"
@@ -283,7 +308,7 @@ class RaccdocClient < Shoes
   
   def new_post(forum_id)
     visit '/login' unless @@bbs
-    stack :width => 700, :margin => 50 do
+    stack STACKSTYLE do
       background lime, :curve => 20
       border black, :curve => 10
       tagline "New Post"
