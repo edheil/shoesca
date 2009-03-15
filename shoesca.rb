@@ -1,3 +1,7 @@
+
+
+
+
 Shoes.setup do
   Gem.sources = ['http://gems.github.com/', 'http://gems.rubyforge.org/']
   gem 'minter-raccdoc'
@@ -7,11 +11,29 @@ require 'raccdoc'
 require 'yaml/store'
 
 class RaccdocClient < Shoes
+  LICENSE = <<eof
+Copyright 2009 Edward Heil ( edheil (at) fastmail (dot) fm )
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+eof
+
   STACKSTYLE = { :width => 650, :margin => 20 }
 
   url '/', :main
   url '/forums', :forums
   url '/login', :login
+  url '/license', :license
   url '/forum/(\d+)', :forum
   url '/foruminfo/(\d+)', :foruminfo
   url '/first_unread/(\d+)', :first_unread
@@ -21,7 +43,17 @@ class RaccdocClient < Shoes
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs = nil
 
-  def login(error=nil)
+
+  def license
+    stack STACKSTYLE do
+      background aliceblue, :curve => 20
+      border black, :curve => 20
+      para link('back', :click => '/login')
+      para LICENSE
+    end
+  end
+
+  def login
     @store = YAML::Store.new('bbsconfig.yaml')
     @username, @password = nil, nil
     @store.transaction(true) do
@@ -64,6 +96,9 @@ class RaccdocClient < Shoes
       button "login" do
         do_login
       end
+
+      para(link( 'license', :click => '/license' ))
+
 
       keypress do | key |
         if key == "\n"
