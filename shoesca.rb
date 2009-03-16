@@ -1,7 +1,3 @@
-
-
-
-
 Shoes.setup do
   Gem.sources = ['http://gems.github.com/', 'http://gems.rubyforge.org/']
   gem 'minter-raccdoc'
@@ -9,7 +5,6 @@ end
 
 require 'raccdoc'
 require 'yaml/store'
-require 'openssl/ssl' # prevents a weird little error on packaged versions for Win
 
 class RaccdocClient < Shoes
   LICENSE = <<eof
