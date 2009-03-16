@@ -9,6 +9,7 @@ end
 
 require 'raccdoc'
 require 'yaml/store'
+require 'openssl/ssl' # prevents a weird little error on packaged versions for Win
 
 class RaccdocClient < Shoes
   LICENSE = <<eof
@@ -174,6 +175,8 @@ eof
         else
           visit '/forums'
         end
+      elsif key == 'q'
+        exit()
       end
     end
   end
@@ -225,6 +228,8 @@ eof
     keypress do | key |
       if key == " "
         visit "/first_unread/#{id}"
+      elsif key == 'q'
+        exit()
       end
     end
   end
@@ -232,13 +237,19 @@ eof
   def foruminfo(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
+
+    linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
+                                      [ 'p', '[p]ost', "/new_post/#{id}"],
+                                      [ " ", "[ ]first unread message", "/first_unread/#{id}" ],
+                                     ]
+    keypress { | key |  keypressproc.call(key) }
     
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       tagline( link(link("Forums", :click => "/forums")), " / ", 
                link( "#{@forum.name}>", :click => "/forum/#{id}") )
-      para( link("post", :click => "/new_post/#{id}") )
+      para *linklist
       @info = @forum.forum_information
       info @info.inspect
       stack STACKSTYLE do
@@ -274,6 +285,30 @@ eof
     visit "/forum/#{forum_id}"
   end
 
+
+  def actions(list)
+    linklist = []
+    list.each do | item |
+      linklist << link(item[1], :click => item[2] )
+      linklist << " " unless item == list.last
+    end
+
+    keypressproc = Proc.new do | key |
+      found = list.assoc(key)
+      if found
+        action = found[2]
+        debug "checking respond to"
+        if action.respond_to? :call
+          debug "calling #{action}"
+          action.call
+        else
+          visit action
+        end
+      end
+    end
+    return linklist, keypressproc
+  end
+
   def message(forum_id,msgnum)
     visit '/login' unless @@bbs
     @forum =  @@bbs.jump(forum_id)
@@ -286,6 +321,21 @@ eof
     msg_prev = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
     msg_next = post_ids[post_index - 1] if post_index > 0
     @post = @forum.read(msgnum)
+
+
+    action_list = 
+      if msg_prev;[[ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}"]]; else []; end +
+      if msg_next; [[ "n", "[n]ext","/message/#{forum_id}/#{msg_next}" ]]; else []; end +
+      [ [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ],
+        [ "b" , "[b]ack to forum", "/forum/#{forum_id}" ],
+        [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ],
+        [ "c", "[c]opy to clipboard",  Proc.new { self.clipboard=@whole_message; alert( "Copied to clipboard.") } ],
+        [ " ", "[ ]first unread message", "/first_unread/#{forum_id}" ],
+        [ "q", "[q]uit", Proc.new { exit()} ] ]
+
+    linklist, keypressproc = actions(action_list)
+    keypress { | key |  keypressproc.call(key) }
+
     stack STACKSTYLE do
       background gold, :curve => 20
       border black, :curve => 20
@@ -296,28 +346,16 @@ eof
              link("#{msgnum}", :click => "/message/#{forum_id}/#{msgnum}"))
       @whole_message = "#{@post.date} from #{@post.author}\n#{@post.body}[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
 
-      para( if msg_next; link("next", :click => "/message/#{forum_id}/#{msg_next}"); end,
-            " ",
-            if msg_prev; link("previous", :click => "/message/#{forum_id}/#{msg_prev}"); end,
-            " ",
-            link("reply", :click => "/new_reply/#{forum_id}/#{msgnum}"),
-            " ",
-            link("mark unread", :click => "/mark_unread/#{forum_id}/#{msgnum}"),
-            "  ",
-            link("copy post to clipboard") { self.clipboard=@whole_message; info @whole_message }
-            )
+        
       stack STACKSTYLE do
         background aliceblue, :curve => 20
         border black, :curve => 20
         para @whole_message
       end      
-#      para @post.inspect
+      para *linklist
+
     end
-    keypress do | key |
-      if key == " "
-        visit "/first_unread/#{forum_id}"
-      end
-    end
+
 
   end
 
@@ -328,9 +366,9 @@ eof
     quote = "#{@post.author} wrote:\n#{old_body}\n\n"
     stack STACKSTYLE do
       background lime, :curve => 20
-      border black, :curve => 10
+      border black, :curve => 20
       tagline "New Post"
-      para link("back", :click => "/forum/#{forum_id}")
+      para link("back", :click => "/message/#{forum_id}/#{msgnum}")
       @post_box = edit_box quote, :width => 500, :height => 300
       button "post" do
         text = @post_box.text
@@ -338,14 +376,13 @@ eof
         visit("/message/#{forum_id}/#{new_post.id}")
       end
     end
-
   end
   
   def new_post(forum_id)
     visit '/login' unless @@bbs
     stack STACKSTYLE do
       background lime, :curve => 20
-      border black, :curve => 10
+      border black, :curve => 20
       tagline "New Post"
       para link("back", :click => "/forum/#{forum_id}")
       @post_box = edit_box :width => 500, :height => 300
