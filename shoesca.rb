@@ -25,7 +25,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 eof
 
   STACKSTYLE = { :width => 650, :margin => 20 }
-
+  URLRE = Regexp.new('https?://[^ \n\)]+')
+ 
   url '/', :main
   url '/forums', :forums
   url '/login', :login
@@ -368,15 +369,21 @@ eof
         keypressproc.call(key) 
       }
 
+      the_body = @post.body
+      body_urls = the_body.scan(URLRE)
+
       @messagestack.clear do
         para *linklist
-        @whole_message = "#{@post.date} from #{@post.author}\n#{@post.body}[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
+        @whole_message = "#{@post.date} from #{@post.author}\n#{the_body}[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
         
         stack STACKSTYLE do
           background aliceblue, :curve => 20
           border black, :curve => 20
           para @whole_message
-        end      
+          body_urls.each do | a_url |
+            para link(a_url, :click => a_url)
+          end
+        end
       end
     }
 
