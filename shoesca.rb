@@ -180,7 +180,7 @@ eof
     visit '/login' unless @@bbs
     linklist, keypressproc = actions( [[ 'p', '[p]ost', "/new_post/#{id}"],
                                        [ 'i', '[i]nfo', "/foruminfo/#{id}"],
-                                       [ 'i', '[b]ack to forum list', "/forums"],
+                                       [ 'b', '[b]ack to forum list', "/forums"],
                                        [ ' ', '[ ]first unread', "/first_unread/#{id}"],
                                        [ 'q', '[q]uit', Proc.new { exit() } ]
                                       ] )
