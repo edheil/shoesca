@@ -232,30 +232,34 @@ eof
   def foruminfo(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
-
+    
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
                                       [ 'p', '[p]ost', "/new_post/#{id}"],
                                       [ " ", "[ ]first unread message", "/first_unread/#{id}" ],
+                                      [ "q", "[q]uit", Proc.new { exit()} ]
                                      ]
     keypress { | key |  keypressproc.call(key) }
     
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
-      tagline( link(link("Forums", :click => "/forums")), " / ", 
-               link( "#{@forum.name}>", :click => "/forum/#{id}") )
       para *linklist
       @info = @forum.forum_information
+      the_body = @info[:body]
+      body_urls = the_body.scan(URLRE)
       stack STACKSTYLE do
         background lightgrey, :curve => 10
         border black, :curve => 10
         caption "Forum moderator is #{@forum.admin}.  Total messages: #{@forum.noteids.last}."
         caption "Forum info last updated #{@info[:date]} by Mikemike"
         para "#{@info[:body]}"
+        body_urls.each do | a_url |
+          para link(a_url, :click => a_url)
+        end
       end
     end
   end
-
+    
   def first_todo
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
