@@ -4,6 +4,7 @@ Shoes.setup do
 end
 
 require 'raccdoc'
+require 'sqlite3'
 require 'yaml/store'
 
 class RaccdocClient < Shoes
@@ -29,6 +30,7 @@ eof
  
   url '/', :main
   url '/forums', :forums
+  url '/goto/(\d+)', :goto
   url '/login', :login
   url '/license', :license
   url '/forum/(\d+)', :forum
@@ -39,8 +41,10 @@ eof
   url '/mark_unread/(\d+)/(\d+)', :mark_unread
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
-  @@bbs = nil
-
+  @@bbs, @msg_store = nil, nil
+    
+  @@msg_store = SQLite3::Database.new('messages.db')
+  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT);");
 
   def license
     stack STACKSTYLE do
@@ -83,7 +87,7 @@ eof
           end
           visit '/forums'
         end
-      end
+     end
     end
 
 
@@ -135,7 +139,6 @@ eof
       forums_all = (forums.to_a.map{ |k| k[0]} - forums_joined - forums_todo - [1]).sort
       forums_todo.each { |n| forums[n][:todo] = true }
       forums_joined.each { |n| forums[n][:joined] = true }
-      
       # delete mail
       forums.delete(1)
       linklist, keypressproc = actions( [[ ' ', '[ ]first forum with unread', "/first_todo"],
@@ -176,11 +179,26 @@ eof
     end
   end
   
+
+  def goto(id)
+    # id is forum to jump *from*
+    id = id.to_i
+    para "marking read, moving on..."
+    Thread.new {
+      @the_forum = @@bbs.jump(id)
+      @the_forum.first_unread = @the_forum.noteids.sort.last.to_i + 1
+      visit '/first_todo'
+    }
+  end
+
   def forum(id)
     visit '/login' unless @@bbs
+    id = id.to_i
     linklist, keypressproc = actions( [[ 'p', '[p]ost', "/new_post/#{id}"],
                                        [ 'i', '[i]nfo', "/foruminfo/#{id}"],
                                        [ 'b', '[b]ack to forum list', "/forums"],
+                                       [ 'g', '[g]oto next forum with unread messages', 
+                                         "/goto/#{id}"],
                                        [ ' ', '[ ]first unread', "/first_unread/#{id}"],
                                        [ 'q', '[q]uit', Proc.new { exit() } ]
                                       ] )
@@ -228,7 +246,7 @@ eof
       end
     }
   end
-
+    
   def foruminfo(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
@@ -269,10 +287,8 @@ eof
     forums_todo = (@@bbs.forums('todo').to_a.map{ |k| k[0] } - [1]).sort
     if forums_todo.length > 0
       forum_id = forums_todo[0]
-      info "found todo forum: #{forum_id}"
       visit "/first_unread/#{forum_id}"
     else
-      info "found no todo forums: visiting forums"
       visit "/forums"
     end
   end
@@ -286,21 +302,15 @@ eof
       border black, :curve => 20
       para "finding first unread message in forum #{forum_id}..."
     end
+
     Thread.new {
-      if forum_id.length == 0 # need to find it
-        info "zero length forum id, looking for first unread forum"
-      end
-      info "jumping to #{forum_id}"
       @forum =  @@bbs.jump(forum_id)
-      info "finding first unread"
+      noteids = @forum.noteids.map { |n| n.to_i }.sort
       first_unread_msg = @forum.first_unread.to_i
-      info "seeing if it exists"
-      first_unread_found = @forum.noteids.sort.detect { |noteid| noteid >= first_unread_msg }
+      first_unread_found = noteids.detect { |noteid| noteid >= first_unread_msg }
       if first_unread_found
-        info "visiting it"
         visit "/message/#{forum_id}/#{first_unread_found}"
       else
-        info "visiting first todo"
         visit "/first_todo"
       end
     }
@@ -338,7 +348,37 @@ eof
     return linklist, keypressproc
   end
 
+  def store_message(db, msghash)
+    sql = "INSERT INTO messages VALUES( ?, ?, ?, ?, ?, ?)"
+    db.execute(sql, msghash[:forum_id], msghash[:message_id], msghash[:date], msghash[:body], msghash[:author], msghash[:authority])
+  end
+
+  def get_message(db, forum_id, msgnum)
+    sql = "SELECT * FROM messages WHERE forum_id = ? AND message_id = ?";
+    result = db.get_first_row(sql, forum_id, msgnum) 
+    return nil unless result
+    msg = {}
+    [:forum_id, :message_id, :date, :body, :author, :authorty].each_with_index do | k, i |
+      msg[k] = result[i]
+    end
+    return msg
+  end
+
+  def get_message_with_caching(forum_id, msgnum)
+    msg = get_message(@@msg_store, forum_id, msgnum) if @@msg_store
+    unless msg
+      msg = {}
+      @post = @@bbs.jump(forum_id).read(msgnum)
+      [:date, :author, :body, :authority].each { |k| msg[k] = @post.send(k) }
+      msg[:message_id] = msgnum
+      msg[:forum_id] = forum_id
+      store_message(@@msg_store, msg) if @@msg_store
+    end
+    msg
+  end
+
   def message(forum_id,msgnum)
+    msgnum=msgnum.to_i
     visit '/login' unless @@bbs
     stack STACKSTYLE do
       background gold, :curve => 20
@@ -352,17 +392,19 @@ eof
       if msgnum.to_i >= first_unread_msg
         @forum.first_unread = msgnum.to_i + 1
       end
-      post_ids = @forum.post_headers.keys.sort.reverse
+      post_ids = @forum.noteids.map{ |n| n.to_i }.sort
       post_index = post_ids.index(msgnum)
-      msg_prev = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
-      msg_next = post_ids[post_index - 1] if post_index > 0
-      @post = @forum.read(msgnum)
+      remaining = post_ids.length - post_index
+      msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
+      msg_prev = post_ids[post_index - 1] if post_index > 0
+
+      msg = get_message_with_caching(forum_id, msgnum)
 
       action_list = 
       if msg_prev;[[ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}"]]; else []; end +
       if msg_next; [[ "n", "[n]ext","/message/#{forum_id}/#{msg_next}" ]]; else []; end +
       [ [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ],
-        [ "b" , "[b]ack to forum", "/forum/#{forum_id}" ],
+        [ "s" , "[s]top reading", "/forum/#{forum_id}" ],
         [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ],
         [ "c", "[c]opy to clipboard",  Proc.new { self.clipboard=@whole_message; alert( "Copied to clipboard.") } ],
         [ " ", "[ ]first unread message", "/first_unread/#{forum_id}" ],
@@ -373,12 +415,13 @@ eof
         keypressproc.call(key) 
       }
 
-      the_body = @post.body
-      body_urls = the_body.scan(URLRE)
+      body_urls = msg[:body].scan(URLRE)
 
       @messagestack.clear do
         para *linklist
-        @whole_message = "#{@post.date} from #{@post.author}\n#{the_body}[#{@forum.name}> msg #{msgnum} (#{ post_index } remaining)]"
+        @whole_message = ( "#{msg[:date]} from #{msg[:author]}\n" + 
+                           "#{msg[:body]}" + 
+                           "[#{@forum.name}> msg #{msgnum} (#{ remaining } remaining)]")
         
         stack STACKSTYLE do
           background aliceblue, :curve => 20
@@ -390,7 +433,6 @@ eof
         end
       end
     }
-
   end
 
   def new_reply(forum_id, msgnum)
