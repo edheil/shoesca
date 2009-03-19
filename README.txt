@@ -18,9 +18,4 @@ The first time you run the app, it will download a copy of the
 raccdoc library; subsequent runs, it will use the copy it
 downloaded the first time.
 
-Packaged, executable  versions (.exe, .dmg, and .run) are
-available in the packages directory; however, they may be
-buggy (the .exe in particular pops up a bogus error message
-about SSLEAY32.dll).  Downloading shoes from http//shoooes.net
-is preferable, esp. on Windows.
 
