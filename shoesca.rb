@@ -42,7 +42,7 @@ eof
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs, @msg_store = nil, nil
-    
+  @@forum_cache = {}
   @@msg_store = SQLite3::Database.new('messages.db')
   @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT);");
 
@@ -194,16 +194,6 @@ eof
   def forum(id)
     visit '/login' unless @@bbs
     id = id.to_i
-    linklist, keypressproc = actions( [[ 'p', '[p]ost', "/new_post/#{id}"],
-                                       [ 'i', '[i]nfo', "/foruminfo/#{id}"],
-                                       [ 'b', '[b]ack to forum list', "/forums"],
-                                       [ 'g', '[g]oto next forum with unread messages', 
-                                         "/goto/#{id}"],
-                                       [ ' ', '[ ]first unread', "/first_unread/#{id}"],
-                                       [ 'q', '[q]uit', Proc.new { exit() } ]
-                                      ] )
-    
-    keypress { | key |  keypressproc.call(key) }
     
     @mainstack = stack STACKSTYLE do
       background blanchedalmond, :curve => 20
@@ -212,13 +202,31 @@ eof
     end
 
     Thread.new {
+      @@forum_cache[id] = {}
       @forum = @@bbs.jump(id)
       first_unread = @forum.first_unread.to_i
+      @@forum_cache[id][:first_unread] = first_unread
       @posts = @forum.post_headers
       noteids = @forum.noteids.sort
+      @@forum_cache[id][:noteids] = noteids
+      @@forum_cache[id][:name] = @forum.name
       msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
       msgs_read = noteids.select { |msg| msg.to_i < first_unread }
       info "got posts"
+    linklist, keypressproc = actions( [[ 'p', '[p]ost', "/new_post/#{id}"],
+                                       [ 'i', '[i]nfo', "/foruminfo/#{id}"],
+                                       [ 'l', 'forum [l]ist', "/forums"],
+                                       [ 'f', 'read [f]orward', "/message/#{id}/#{noteids.first}"],
+                                       [ 'b', 'read [b]ackward', "/message/#{id}/#{noteids.last}"],
+                                       [ 'g', '[g]oto next forum with unread messages', 
+                                         "/goto/#{id}"],
+                                       [ ' ', '[ ]first unread', "/first_unread/#{id}"],
+                                       [ 'q', '[q]uit', Proc.new { exit() } ]
+                                      ] )
+    
+    keypress { | key |  keypressproc.call(key) }
+
+
       @mainstack.clear do
         info "adding background"
         background blanchedalmond, :curve => 20
@@ -287,7 +295,8 @@ eof
     forums_todo = (@@bbs.forums('todo').to_a.map{ |k| k[0] } - [1]).sort
     if forums_todo.length > 0
       forum_id = forums_todo[0]
-      visit "/first_unread/#{forum_id}"
+#      visit "/first_unread/#{forum_id}"
+      visit "/forum/#{forum_id}"
     else
       visit "/forums"
     end
@@ -313,7 +322,7 @@ eof
       else
         visit "/first_todo"
       end
-    }
+   }
   end
 
   def mark_unread(forum_id,msgnum)
@@ -378,6 +387,7 @@ eof
   end
 
   def message(forum_id,msgnum)
+    forum_id=forum_id.to_i
     msgnum=msgnum.to_i
     visit '/login' unless @@bbs
     stack STACKSTYLE do
@@ -387,18 +397,24 @@ eof
     end
 
     Thread.new {
-      @forum =  @@bbs.jump(forum_id)
-      first_unread_msg = @forum.first_unread.to_i
+      first_unread_msg = @@forum_cache[forum_id][:first_unread]
       if msgnum.to_i >= first_unread_msg
+        @messagestack.append { para "marking it read..." }
+        @forum =  @@bbs.jump(forum_id)
         @forum.first_unread = msgnum.to_i + 1
       end
-      post_ids = @forum.noteids.map{ |n| n.to_i }.sort
+      post_ids = @@forum_cache[forum_id][:noteids]
       post_index = post_ids.index(msgnum)
       remaining = post_ids.length - post_index
       msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
       msg_prev = post_ids[post_index - 1] if post_index > 0
 
       msg = get_message_with_caching(forum_id, msgnum)
+      while not msg
+        info "waiting for message to show up in the cache..."
+        sleep 1
+        msg = get_message(@@msg_store, forum_id, msgnum)
+      end
 
       action_list = 
       if msg_prev;[[ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}"]]; else []; end +
@@ -421,7 +437,7 @@ eof
         para *linklist
         @whole_message = ( "#{msg[:date]} from #{msg[:author]}\n" + 
                            "#{msg[:body]}" + 
-                           "[#{@forum.name}> msg #{msgnum} (#{ remaining } remaining)]")
+                           "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
         
         stack STACKSTYLE do
           background aliceblue, :curve => 20
