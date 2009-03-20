@@ -480,7 +480,7 @@ eof
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
-        visit("/message/#{forum_id}/#{new_post.id}")
+        visit("/forum/#{forum_id}");
       end
     end
   end
@@ -497,7 +497,7 @@ eof
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
-        visit("/message/#{forum_id}/#{new_post.id}")
+        visit("/forum/#{forum_id}");
       end
     end
   end
