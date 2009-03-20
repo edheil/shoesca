@@ -25,7 +25,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 eof
 
-  STACKSTYLE = { :width => 650, :margin => 20 }
+#  STACKSTYLE = { :width => 650, :margin => 20 }
+  STACKSTYLE = { :margin => 20 }
   URLRE = Regexp.new('https?://[^ \n\)]+')
  
   url '/', :main
@@ -47,6 +48,7 @@ eof
   @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT);");
 
   def license
+    background black
     stack STACKSTYLE do
       background aliceblue, :curve => 20
       border black, :curve => 20
@@ -56,6 +58,7 @@ eof
   end
 
   def login
+    background black
     @store = YAML::Store.new('bbsconfig.yaml')
     @username, @password = nil, nil
     @store.transaction(true) do
@@ -125,6 +128,7 @@ eof
 
   def forums
     visit '/login' unless @@bbs
+    background black
 
     @mainstack = stack STACKSTYLE do
       background aliceblue, :curve => 20
@@ -159,18 +163,20 @@ eof
             background white, :curve => 20
             border black, :curve => 20
             caption group_name
-            ordered_ids.each do | id |
-              data = forums[id]
-              stack STACKSTYLE do
-                if data[:todo]
-                  background ivory, :curve => 10
-                elsif data[:joined]
-                  background lightgrey, :curve => 10
-                else
-                  background darkslateblue, :curve => 10
+            flow do
+              ordered_ids.each do | id |
+                data = forums[id]
+                stack :width => 200, :margin => 20 do
+                  if data[:todo]
+                    background ivory, :curve => 10
+                  elsif data[:joined]
+                    background lightgrey, :curve => 10
+                  else
+                    background darkslateblue, :curve => 10
+                  end
+                  border black, :curve => 10
+                  para link("#{id}> #{data[:name]}", :click => "/forum/#{id}")
                 end
-                border black, :curve => 10
-                para link("#{id}> #{data[:name]}", :click => "/forum/#{id}")
               end
             end
           end
@@ -194,6 +200,7 @@ eof
   def forum(id)
     visit '/login' unless @@bbs
     id = id.to_i
+    background black
     
     @mainstack = stack STACKSTYLE do
       background blanchedalmond, :curve => 20
@@ -236,17 +243,19 @@ eof
           [ "Read", msgs_read,  ]].each do | pair |
           group_name, ordered_ids = *pair
           info "adding #{group_name} stack"
-          stack STACKSTYLE do
+          stack :margin => 20 do
             background white, :curve => 20
             border black, :curve => 20
             caption group_name
-            ordered_ids.each do | post_id |
-              post = @posts[post_id.to_s]
-              stack STACKSTYLE do
-                background ivory, :curve => 10
-                border black, :curve => 10
-                para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}")
-                para post[:subject]
+            flow do
+              ordered_ids.each do | post_id |
+                post = @posts[post_id.to_s]
+                stack :margin => 20, :width => 200 do
+                  background ivory, :curve => 10
+                  border black, :curve => 10
+                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}")
+                  para post[:subject]
+                end
               end
             end
           end
@@ -258,6 +267,7 @@ eof
   def foruminfo(id)
     visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
+    background black
     
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
                                       [ 'p', '[p]ost', "/new_post/#{id}"],
@@ -287,6 +297,7 @@ eof
   end
     
   def first_todo
+    background black
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
@@ -305,6 +316,7 @@ eof
   def first_unread(forum_id)
     visit '/login' unless @@bbs
     info "first_unread for forum_id #{forum_id}"
+    background black
 
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
@@ -390,6 +402,7 @@ eof
     forum_id=forum_id.to_i
     msgnum=msgnum.to_i
     visit '/login' unless @@bbs
+    background black
     stack STACKSTYLE do
       background gold, :curve => 20
       border black, :curve => 20
@@ -402,10 +415,11 @@ eof
         @messagestack.append { para "marking it read..." }
         @forum =  @@bbs.jump(forum_id)
         @forum.first_unread = msgnum.to_i + 1
+        @@forum_cache[forum_id][:first_unread] = msgnum.to_i + 1
       end
       post_ids = @@forum_cache[forum_id][:noteids]
       post_index = post_ids.index(msgnum)
-      remaining = post_ids.length - post_index
+      remaining = post_ids.length - post_index - 1
       msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
       msg_prev = post_ids[post_index - 1] if post_index > 0
 
@@ -456,6 +470,7 @@ eof
     @post = @@bbs.jump(forum_id).read(msgnum)
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
     quote = "#{@post.author} wrote:\n#{old_body}\n\n"
+    background black
     stack STACKSTYLE do
       background lime, :curve => 20
       border black, :curve => 20
@@ -472,6 +487,7 @@ eof
   
   def new_post(forum_id)
     visit '/login' unless @@bbs
+    background black
     stack STACKSTYLE do
       background lime, :curve => 20
       border black, :curve => 20
