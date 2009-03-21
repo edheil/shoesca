@@ -46,7 +46,7 @@ eof
   @@bbs, @msg_store = nil, nil
   @@forum_cache = {}
   @@msg_store = SQLite3::Database.new('messages.db')
-  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT);");
+  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT, UNIQUE (forum_id, message_id) ON CONFLICT REPLACE);");
 
   def license
     background black
@@ -206,15 +206,18 @@ eof
   def sneakily_cache_forum(forum_id, note_ids)
     # if the main message db doesn't exist, don't bother making a new one
     return unless @@msg_store
-    Thread.new do
+    Thread.new {
       # this is a separate thread; we need our own bbs and db handle
       with_new_bbs_connection do | bbs |
         msg_store = SQLite3::Database.new('messages.db')
-        note_ids.each do | msgnum |
-          get_message_with_caching(forum_id, msgnum, bbs, msg_store)
+        sql = 'SELECT message_id FROM messages WHERE forum_id = ? AND message_id IN (' +
+          Array.new(note_ids.length, '?').join(', ') +' ) ;'
+        already_stored = msg_store.execute(sql, forum_id, *note_ids).flatten.map {|_|_.to_i}
+        (note_ids - already_stored).each do | msgnum |
+          get_message_from_bbs_and_store(forum_id, msgnum, bbs, msg_store)
         end
       end
-    end
+    }
   end
 
   def forum(id)
@@ -241,11 +244,13 @@ eof
       msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
       msgs_read = noteids.select { |msg| msg.to_i < first_unread }
       info "got posts"
-    linklist, keypressproc = actions( [[ 'p', '[p]ost', "/new_post/#{id}"],
+    linklist, keypressproc = actions( [[ 'e', '[e]nter msg', "/new_post/#{id}"],
                                        [ 'i', '[i]nfo', "/foruminfo/#{id}"],
                                        [ 'l', 'forum [l]ist', "/forums"],
-                                       [ 'f', 'read [f]orward', "/message/#{id}/#{noteids.first}/forward"],
-                                       [ 'b', 'read [b]ackward', "/message/#{id}/#{noteids.last}/backward"],
+                                       [ 'f', 'read [f]orward', 
+                                         "/message/#{id}/#{noteids.first}/forward"],
+                                       [ 'b', 'read [b]ackward', 
+                                         "/message/#{id}/#{noteids.last}/backward"],
                                        [ 'g', '[g]oto next forum with unread messages', 
                                          "/goto/#{id}"],
                                        [ ' ', '[ ]first unread', "/first_unread/#{id}"],
@@ -256,9 +261,9 @@ eof
 
 
       @mainstack.clear do
-        info "adding background"
         background blanchedalmond, :curve => 20
         border black, :curve => 20
+
         para *linklist
         [ [ "Unread", msgs_unread,  ],
           [ "Read", msgs_read,  ]].each do | pair |
@@ -290,7 +295,7 @@ eof
     background black
     
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
-                                      [ 'p', '[p]ost', "/new_post/#{id}"],
+                                      [ 'p', '[e]nter msg', "/new_post/#{id}"],
                                       [ " ", "[ ]first unread message", "/first_unread/#{id}" ],
                                       [ "q", "[q]uit", Proc.new { exit()} ]
                                      ]
@@ -403,8 +408,8 @@ eof
     db.execute(sql, msghash[:forum_id], msghash[:message_id], msghash[:date], msghash[:body], msghash[:author], msghash[:authority])
   end
 
-  def get_message(db, forum_id, msgnum)
-    sql = "SELECT * FROM messages WHERE forum_id = ? AND message_id = ?";
+  def get_message_from_db(db, forum_id, msgnum)
+    sql = "SELECT * FROM messages WHERE forum_id = ? AND message_id = ?;"
     result = db.get_first_row(sql, forum_id, msgnum) 
     return nil unless result
     msg = {}
@@ -414,18 +419,24 @@ eof
     return msg
   end
 
+  def get_message_from_bbs_and_store(forum_id, msgnum, bbs=nil, msg_store=nil)
+    bbs ||=@@bbs
+    msg_store ||=@@msg_store
+    msg = {}
+    post = bbs.jump(forum_id).read(msgnum)
+    [:date, :author, :body, :authority].each { |k| msg[k] = post.send(k) }
+    msg[:message_id] = msgnum
+    msg[:forum_id] = forum_id
+    store_message(msg_store, msg) if msg_store
+    msg
+  end
+
   def get_message_with_caching(forum_id, msgnum, bbs=nil, msg_store=nil)
     bbs ||=@@bbs
     msg_store ||=@@msg_store
-    msg = get_message(@@msg_store, forum_id, msgnum) if @@msg_store
+    msg = get_message_from_db(@@msg_store, forum_id, msgnum) if @@msg_store
     unless msg
-      debug "getting message #{msgnum} in #{forum_id} from bbs"
-      msg = {}
-      @post = bbs.jump(forum_id).read(msgnum)
-      [:date, :author, :body, :authority].each { |k| msg[k] = @post.send(k) }
-      msg[:message_id] = msgnum
-      msg[:forum_id] = forum_id
-      store_message(msg_store, msg) if msg_store
+      msg = get_message_from_bbs_and_store(forum_id, msgnum, bbs, msg_store)
     end
     msg
   end
@@ -453,7 +464,7 @@ eof
       while not msg
         info "waiting for message to show up in the cache..."
         sleep 1
-        msg = get_message(@@msg_store, forum_id, msgnum)
+        msg = get_message_from_db(@@msg_store, forum_id, msgnum)
       end
       
       action_list = []
