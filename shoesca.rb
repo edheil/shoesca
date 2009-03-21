@@ -480,12 +480,28 @@ eof
       action_list << [ "c", "[c]opy to clipboard",  
                        Proc.new { self.clipboard=@whole_message; 
                          alert( "Copied to clipboard.") } ]
-      if direction == 'forward' and msg_next
-        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
-      elsif direction == 'backward' and msg_next
-        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
-      else
-        action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+      if direction == 'forward'
+        if msg_next
+          action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
+        else
+          action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+        end
+        if msg_prev 
+          action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_prev}/backward" ]
+        else
+          action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
+        end
+      elsif direction == 'backward'
+        if msg_prev
+          action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
+        else
+          action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+        end
+        if msg_next
+          action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_next}/forward" ]
+        else
+          action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
+        end
       end
       action_list << [ "q", "[q]uit", Proc.new { exit()} ]
       
@@ -524,7 +540,7 @@ eof
       border black, :curve => 20
       tagline "New Post"
       para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
-      @post_box = edit_box quote, :width => 500, :height => 300
+      @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
@@ -540,7 +556,7 @@ eof
       border black, :curve => 20
       tagline "New Post"
       para link("back", :click => "/forum/#{forum_id}")
-      @post_box = edit_box :width => 500, :height => 300
+      @post_box = edit_box :width => 500, :height => 300, :margin => 20
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
