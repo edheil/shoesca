@@ -25,11 +25,12 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 eof
 
-#  STACKSTYLE = { :width => 650, :margin => 20 }
+  HOST = '64.198.88.46' # bbs.iscabbs.com was not resolving
+  PORT = 6145
   STACKSTYLE = { :margin => 20 }
   URLRE = Regexp.new('https?://[^ \n\)]+')
  
-  url '/', :main
+  url '/', :login
   url '/forums', :forums
   url '/goto/(\d+)', :goto
   url '/login', :login
@@ -38,7 +39,7 @@ eof
   url '/foruminfo/(\d+)', :foruminfo
   url '/first_todo', :first_todo
   url '/first_unread/(\d+)', :first_unread
-  url '/message/(\d+)/(\d+)', :message
+  url '/message/(\d+)/(\d+)/(.*)', :message
   url '/mark_unread/(\d+)/(\d+)', :mark_unread
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
@@ -66,16 +67,16 @@ eof
     end
 
     def do_login
-      @username = @username_line.text
-      @password = @password_line.text
+      @@username = @username_line.text
+      @@password = @password_line.text
       @mainstack.append do
         para "logging in..."
       end
       Thread.new do
         begin
-          @@bbs = Raccdoc::Connection.new(:user => @username, :password => @password,
-                                          :host => '64.198.88.46', # bbs.iscabbs.com was not resolving
-                                          :port => 6145
+          @@bbs = Raccdoc::Connection.new(:user => @@username, :password => @@password,
+                                          :host => HOST,
+                                          :port => PORT
                                           )
         rescue RuntimeError => err
           debug "error: #{err.message}"
@@ -118,16 +119,7 @@ eof
     end
   end
 
-  def main
-    if @@bbs
-      visit '/forums'
-    else
-      visit '/login'
-    end
-  end
-
   def forums
-    visit '/login' unless @@bbs
     background black
 
     @mainstack = stack STACKSTYLE do
@@ -197,8 +189,35 @@ eof
     }
   end
 
+  def with_new_bbs_connection
+    begin
+    bbs = Raccdoc::Connection.new(:user => @@username, :password => @@password,
+                                  :host => HOST,
+                                  :port => PORT
+                                  )
+    yield bbs
+      rescue RuntimeError => err
+      debug "error: #{err.message}"
+      visit '/'
+    end
+  end
+  
+  
+  def sneakily_cache_forum(forum_id, note_ids)
+    # if the main message db doesn't exist, don't bother making a new one
+    return unless @@msg_store
+    Thread.new do
+      # this is a separate thread; we need our own bbs and db handle
+      with_new_bbs_connection do | bbs |
+        msg_store = SQLite3::Database.new('messages.db')
+        note_ids.each do | msgnum |
+          get_message_with_caching(forum_id, msgnum, bbs, msg_store)
+        end
+      end
+    end
+  end
+
   def forum(id)
-    visit '/login' unless @@bbs
     id = id.to_i
     background black
     
@@ -208,6 +227,7 @@ eof
       para "loading forum #{id}..."
     end
 
+
     Thread.new {
       @@forum_cache[id] = {}
       @forum = @@bbs.jump(id)
@@ -216,6 +236,7 @@ eof
       @posts = @forum.post_headers
       noteids = @forum.noteids.sort
       @@forum_cache[id][:noteids] = noteids
+      sneakily_cache_forum(id, noteids)
       @@forum_cache[id][:name] = @forum.name
       msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
       msgs_read = noteids.select { |msg| msg.to_i < first_unread }
@@ -223,8 +244,8 @@ eof
     linklist, keypressproc = actions( [[ 'p', '[p]ost', "/new_post/#{id}"],
                                        [ 'i', '[i]nfo', "/foruminfo/#{id}"],
                                        [ 'l', 'forum [l]ist', "/forums"],
-                                       [ 'f', 'read [f]orward', "/message/#{id}/#{noteids.first}"],
-                                       [ 'b', 'read [b]ackward', "/message/#{id}/#{noteids.last}"],
+                                       [ 'f', 'read [f]orward', "/message/#{id}/#{noteids.first}/forward"],
+                                       [ 'b', 'read [b]ackward', "/message/#{id}/#{noteids.last}/backward"],
                                        [ 'g', '[g]oto next forum with unread messages', 
                                          "/goto/#{id}"],
                                        [ ' ', '[ ]first unread', "/first_unread/#{id}"],
@@ -248,12 +269,12 @@ eof
             border black, :curve => 20
             caption group_name
             flow do
-              ordered_ids.each do | post_id |
+              ordered_ids.reverse.each do | post_id |
                 post = @posts[post_id.to_s]
                 stack :margin => 20, :width => 200 do
                   background ivory, :curve => 10
                   border black, :curve => 10
-                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}")
+                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
                   para post[:subject]
                 end
               end
@@ -265,7 +286,6 @@ eof
   end
     
   def foruminfo(id)
-    visit '/login' unless @@bbs
     @forum = @@bbs.jump(id)
     background black
     
@@ -314,7 +334,6 @@ eof
   end
 
   def first_unread(forum_id)
-    visit '/login' unless @@bbs
     info "first_unread for forum_id #{forum_id}"
     background black
 
@@ -330,15 +349,25 @@ eof
       first_unread_msg = @forum.first_unread.to_i
       first_unread_found = noteids.detect { |noteid| noteid >= first_unread_msg }
       if first_unread_found
-        visit "/message/#{forum_id}/#{first_unread_found}"
+        visit "/message/#{forum_id}/#{first_unread_found}/forward"
       else
         visit "/first_todo"
       end
    }
   end
 
+  def mark_read(forum_id, msgnum)
+    first_unread_msg = @@forum_cache[forum_id][:first_unread]
+    if msgnum.to_i >= first_unread_msg
+      @@forum_cache[forum_id][:first_unread] = msgnum.to_i + 1
+      Thread.new {
+        with_new_bbs_connection { | bbs | bbs.jump(forum_id).first_unread = msgnum.to_i + 1 }
+      }
+    end 
+
+  end
+
   def mark_unread(forum_id,msgnum)
-    visit '/login' unless @@bbs
     @forum =  @@bbs.jump(forum_id)
     first_unread_msg = @forum.first_unread.to_i
     if msgnum.to_i < first_unread_msg
@@ -385,23 +414,25 @@ eof
     return msg
   end
 
-  def get_message_with_caching(forum_id, msgnum)
+  def get_message_with_caching(forum_id, msgnum, bbs=nil, msg_store=nil)
+    bbs ||=@@bbs
+    msg_store ||=@@msg_store
     msg = get_message(@@msg_store, forum_id, msgnum) if @@msg_store
     unless msg
+      debug "getting message #{msgnum} in #{forum_id} from bbs"
       msg = {}
-      @post = @@bbs.jump(forum_id).read(msgnum)
+      @post = bbs.jump(forum_id).read(msgnum)
       [:date, :author, :body, :authority].each { |k| msg[k] = @post.send(k) }
       msg[:message_id] = msgnum
       msg[:forum_id] = forum_id
-      store_message(@@msg_store, msg) if @@msg_store
+      store_message(msg_store, msg) if msg_store
     end
     msg
   end
 
-  def message(forum_id,msgnum)
+  def message(forum_id,msgnum, direction)
     forum_id=forum_id.to_i
     msgnum=msgnum.to_i
-    visit '/login' unless @@bbs
     background black
     stack STACKSTYLE do
       background gold, :curve => 20
@@ -410,18 +441,13 @@ eof
     end
 
     Thread.new {
-      first_unread_msg = @@forum_cache[forum_id][:first_unread]
-      if msgnum.to_i >= first_unread_msg
-        @messagestack.append { para "marking it read..." }
-        @forum =  @@bbs.jump(forum_id)
-        @forum.first_unread = msgnum.to_i + 1
-        @@forum_cache[forum_id][:first_unread] = msgnum.to_i + 1
-      end
+      mark_read(forum_id, msgnum)
       post_ids = @@forum_cache[forum_id][:noteids]
       post_index = post_ids.index(msgnum)
       remaining = post_ids.length - post_index - 1
       msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
       msg_prev = post_ids[post_index - 1] if post_index > 0
+        
 
       msg = get_message_with_caching(forum_id, msgnum)
       while not msg
@@ -429,16 +455,28 @@ eof
         sleep 1
         msg = get_message(@@msg_store, forum_id, msgnum)
       end
-
-      action_list = 
-      if msg_prev;[[ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}"]]; else []; end +
-      if msg_next; [[ "n", "[n]ext","/message/#{forum_id}/#{msg_next}" ]]; else []; end +
-      [ [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ],
-        [ "s" , "[s]top reading", "/forum/#{forum_id}" ],
-        [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ],
-        [ "c", "[c]opy to clipboard",  Proc.new { self.clipboard=@whole_message; alert( "Copied to clipboard.") } ],
-        [ " ", "[ ]first unread message", "/first_unread/#{forum_id}" ],
-        [ "q", "[q]uit", Proc.new { exit()} ] ]
+      
+      action_list = []
+      if msg_prev
+        action_list << [ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}/backward"]
+      end
+      if msg_next
+        action_list << [ "n", "[n]ext","/message/#{forum_id}/#{msg_next}/forward" ]
+      end
+      action_list << [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ]
+      action_list << [ "s" , "[s]top reading", "/forum/#{forum_id}" ]
+      action_list << [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ]
+      action_list << [ "c", "[c]opy to clipboard",  
+                       Proc.new { self.clipboard=@whole_message; 
+                         alert( "Copied to clipboard.") } ]
+      if direction == 'forward' and msg_next
+        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
+      elsif direction == 'backward' and msg_next
+        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
+      else
+        action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+      end
+      action_list << [ "q", "[q]uit", Proc.new { exit()} ]
       
       linklist, keypressproc = actions(action_list)
       keypress { | key |  
@@ -466,7 +504,6 @@ eof
   end
 
   def new_reply(forum_id, msgnum)
-    visit '/login' unless @@bbs
     @post = @@bbs.jump(forum_id).read(msgnum)
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
     quote = "#{@post.author} wrote:\n#{old_body}\n\n"
@@ -475,7 +512,7 @@ eof
       background lime, :curve => 20
       border black, :curve => 20
       tagline "New Post"
-      para link("back", :click => "/message/#{forum_id}/#{msgnum}")
+      para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
       @post_box = edit_box quote, :width => 500, :height => 300
       button "post" do
         text = @post_box.text
@@ -486,7 +523,6 @@ eof
   end
   
   def new_post(forum_id)
-    visit '/login' unless @@bbs
     background black
     stack STACKSTYLE do
       background lime, :curve => 20
