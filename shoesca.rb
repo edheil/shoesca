@@ -50,6 +50,7 @@ eof
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs, @@msg_store = nil, nil
   @@forum_cache = {}
+  @@bbs_cache = {}
 #  @@msg_store = SQLite3::Database.new('messages.db')
 #  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT, UNIQUE (forum_id, message_id) ON CONFLICT REPLACE);");
 
@@ -83,11 +84,13 @@ eof
   end
 
   def quit_from_forum(id)
+    info "quit_from_forum"
     record_last_read(id)
     exit()
   end
 
   def quit
+    info "quit"
     exit()
   end
 
@@ -152,7 +155,6 @@ eof
       end
     end
   end
-
 
   def quit
     exit()
@@ -385,7 +387,7 @@ eof
   end
     
   def first_todo
-    info "first_todo #{id}"
+    info "first_todo"
     background black
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
@@ -395,8 +397,7 @@ eof
     forums_todo = (@@bbs.forums('todo').to_a.map{ |k| k[0] } - [1]).sort
     if forums_todo.length > 0
       forum_id = forums_todo[0]
-#      visit "/first_unread/#{forum_id}"
-      visit "/forum/#{forum_id}"
+      visit "/enter_forum/#{forum_id}"
     else
       visit "/forums"
     end
@@ -404,6 +405,7 @@ eof
 
   def first_unread(forum_id)
     info "first_unread for forum_id #{forum_id}"
+    forum_id = forum_id.to_i
     background black
     cache = @@forum_cache[forum_id]
 
@@ -419,7 +421,7 @@ eof
     if first_unread_found
       visit "/message/#{forum_id}/#{first_unread_found}/forward"
     else
-      visit "/first_todo"
+      visit "/leave_forum/#{forum_id}"
     end
   end
 
