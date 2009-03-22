@@ -452,22 +452,6 @@ eof
     return linklist, keypressproc
   end
 
-  def store_message(db, msghash)
-    sql = "INSERT INTO messages VALUES( ?, ?, ?, ?, ?, ?)"
-    db.execute(sql, msghash[:forum_id], msghash[:message_id], msghash[:date], msghash[:body], msghash[:author], msghash[:authority])
-  end
-
-  def get_message_from_db(db, forum_id, msgnum)
-    sql = "SELECT * FROM messages WHERE forum_id = ? AND message_id = ?;"
-    result = db.get_first_row(sql, forum_id, msgnum) 
-    return nil unless result
-    msg = {}
-    [:forum_id, :message_id, :date, :body, :author, :authorty].each_with_index do | k, i |
-      msg[k] = result[i]
-    end
-    return msg
-  end
-
   def get_message(forum_id, msgnum)
     msg = {}
     post = @@bbs.jump(forum_id).read(msgnum)
