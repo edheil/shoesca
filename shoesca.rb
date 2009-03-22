@@ -41,7 +41,6 @@ eof
   url '/leave_forum/(\d+)', :leave_forum
   url '/switch_forum/(\d+)/(\d+)', :switch_forum
   url '/foruminfo/(\d+)', :foruminfo
-  url '/first_todo', :first_todo
   url '/first_unread/(\d+)', :first_unread
   url '/message/(\d+)/(\d+)/(.*)', :message
   url '/mark_unread/(\d+)/(\d+)', :mark_unread
@@ -199,7 +198,7 @@ eof
     forums.delete(1)
     action_list = []
     if forums_todo.length > 0
-      action_list << [ ' ', '[ ]first forum with unread', "/first_todo"]
+      action_list << [ ' ', '[ ]first forum with unread', "/forum/#{forums_todo.first}"]
     else
       action_list << [ ' ', '[ ]refresh_forums', "/load_bbs"]
     end
@@ -381,23 +380,6 @@ eof
       end
     end
   end
-    
-  def first_todo
-    info "first_todo"
-    background black
-    stack :margin => 20 do
-      background blanchedalmond, :curve => 20
-      border black, :curve => 20
-      para "finding first forum with unread messages..."
-    end
-    forums_todo = (@@bbs.forums('todo').to_a.map{ |k| k[0] } - [1]).sort
-    if forums_todo.length > 0
-      forum_id = forums_todo[0]
-      visit "/enter_forum/#{forum_id}"
-    else
-      visit "/bbs"
-    end
-  end
 
   def first_unread(forum_id)
     info "first_unread for forum_id #{forum_id}"
@@ -518,33 +500,30 @@ eof
       
     linklist, keypressproc = actions(action_list)
     keypress { | key |  
-        keypressproc.call(key) 
+      keypressproc.call(key) 
     }
 
-#    Thread.new {
-      msg = get_message(forum_id, msgnum)
-      
-      body_urls = msg[:body].scan(URLRE)
-      
-      @messagestack.clear do
-        para *linklist
-        @whole_message = ( "#{msg[:date]} from #{msg[:author]}\n" + 
-                           "#{msg[:body]}" + 
-                           "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
-        
-        stack :margin => 20 do
-          background aliceblue, :curve => 20
-          border black, :curve => 20
-          para @whole_message
-          body_urls.each do | a_url |
-            para link(a_url, :click => a_url)
-          end
+    msg = get_message(forum_id, msgnum)
+    body_urls = msg[:body].scan(URLRE)
+    authority = " (#{msg[:authority]})" if msg[:authority]
+    @whole_message = ( "#{msg[:date]} from #{msg[:author]}#{authority}\n" + 
+                       "#{msg[:body]}" + 
+                       "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
+
+    @messagestack.clear do
+      para *linklist
+      stack :margin => 20 do
+        background aliceblue, :curve => 20
+        border black, :curve => 20
+        para @whole_message
+        body_urls.each do | a_url |
+          para link(a_url, :click => a_url)
         end
       end
-      if @@forum_cache[forum_id][:first_unread] <= msgnum
-        @@forum_cache[forum_id][:first_unread] = msgnum + 1
-      end
- #   }
+    end
+    if @@forum_cache[forum_id][:first_unread] <= msgnum
+      @@forum_cache[forum_id][:first_unread] = msgnum + 1
+    end
   end
     
   def new_reply(forum_id, msgnum)
