@@ -27,6 +27,7 @@ eof
   HOST = '64.198.88.46' # bbs.iscabbs.com was not resolving
   PORT = 6145
   URLRE = Regexp.new('https?://[^ \n\)]+')
+  HORIZON = 200 # the range of noteids retrieved before or after the first_unread
  
   url '/', :login
   url '/bbs', :bbs
@@ -248,20 +249,6 @@ eof
       visit "/bbs"
     end
   end
-
-  def with_new_bbs_connection
-    begin
-    bbs = Raccdoc::Connection.new(:user => @@username, :password => @@password,
-                                  :host => HOST,
-                                  :port => PORT
-                                  )
-    yield bbs
-      rescue RuntimeError => err
-      debug "error: #{err.message}"
-      visit '/'
-    end
-  end
-  
   
   def switch_forum(old_id, new_id)
     old_id, new_id = old_id.to_i, new_id.to_i
@@ -279,9 +266,14 @@ eof
     first_unread = forum.first_unread.to_i
     cache[:server_first_unread] = first_unread
     cache[:first_unread] = first_unread
-    cache[:post_headers] = forum.post_headers
-    cache[:noteids] = forum.noteids.sort
+    noterange = "#{ first_unread - HORIZON }-#{ first_unread + HORIZON }"
+    cache[:noteids] = forum.noteids(noterange).sort
+    cache[:post_headers] = forum.post_headers(noterange)
     cache[:name] = forum.name
+    cache[:post_ok] = forum.post?
+    cache[:admin] = forum.admin
+    cache[:anonymous] = forum.anonymous
+    cache[:private] = forum.private
     @@forum_cache[id] = cache
     visit "/forum/#{id}"
   end
@@ -348,10 +340,9 @@ eof
       end
     end
   end
-    
+
   def foruminfo(id)
     info "foruminfo #{id}"
-    @forum = @@bbs.jump(id)
     background black
     
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
@@ -365,15 +356,16 @@ eof
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       para *linklist
-      @info = @forum.forum_information
-      the_body = @info[:body]
+      @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
+      info = @@forum_cache[:forum_info]
+      the_body = info[:body]
       body_urls = the_body.scan(URLRE)
       stack :margin => 20 do
         background lightgrey, :curve => 10
         border black, :curve => 10
-        caption "Forum moderator is #{@forum.admin}.  Total messages: #{@forum.noteids.last}."
-        caption "Forum info last updated #{@info[:date]} by Mikemike"
-        para "#{@info[:body]}"
+        caption "Forum moderator is #{@@forum_cache[:admin]}."
+        caption "Forum info last updated #{info[:date]} by #{info[:from]}"
+        para "#{info[:body]}"
         body_urls.each do | a_url |
           para link(a_url, :click => a_url)
         end
@@ -540,7 +532,7 @@ eof
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
-        visit("/forum/#{forum_id}");
+        visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
       end
     end
   end
@@ -556,7 +548,7 @@ eof
       button "post" do
         text = @post_box.text
         new_post = @@bbs.jump(forum_id).post(text)
-        visit("/forum/#{forum_id}");
+        visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
       end
     end
   end
