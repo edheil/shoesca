@@ -26,14 +26,14 @@ eof
 
   HOST = '64.198.88.46' # bbs.iscabbs.com was not resolving
   PORT = 6145
-  STACKSTYLE = { :margin => 20 }
   URLRE = Regexp.new('https?://[^ \n\)]+')
  
   url '/', :login
   url '/bbs', :bbs
+  url '/load_bbs', :load_bbs
+  url '/quit_from_forum/(\d+)', :quit_from_forum
   url '/quit', :quit
-  url '/quit_from_forum/(d+)', :quit_from_forum
-  url '/goto/(\d+)', :goto
+  url '/goto_next_from/(\d+)', :goto_next_from
   url '/login', :login
   url '/license', :license
   url '/enter_forum/(\d+)', :enter_forum
@@ -54,7 +54,7 @@ eof
   def license
     info "license"
     background black
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background aliceblue, :curve => 20
       border black, :curve => 20
       para link('back', :click => '/login')
@@ -69,13 +69,24 @@ eof
     cached = @@forum_cache[forum_id]
     if cached
       info "got cache"
-      info "seeing if #{ cached[:first_unread] } > #{ cached[:server_first_unread] }"
-      if cached[:first_unread] > cached[:server_first_unread]
-        info "yep"
+      info "seeing if #{ cached[:first_unread] } != #{ cached[:server_first_unread] }"
+      if cached[:first_unread] != cached[:server_first_unread]
+        info "yep.  must modify server's first_unread"
         forum = @@bbs.jump(forum_id)
         info "setting first_unread to #{cached[:first_unread]}"
         forum.first_unread = cached[:first_unread]
         cached[:server_first_unread] = cached[:first_unread]
+
+        info "after the change..."
+        if cached[:first_unread] > cached[:noteids].last
+          info "first_unread is greater than last_note.  deleting #{forum_id} from todo"
+          @@bbs_cache[:todo].delete(forum_id)
+        end
+
+        if cached[:first_unread] <= cached[:noteids].last
+          info "first_unread is less than or equal to last_note.  adding #{forum_id} to todo"
+          @@bbs_cache[:todo][forum_id] = @@bbs_cache[:all][forum_id]
+        end
       end
     end
   end
@@ -124,13 +135,13 @@ eof
           @store.transaction do
             @store['username'], @store['password'] = @username, @password
           end
-          visit '/bbs'
+          visit '/load_bbs'
         end
      end
     end
 
 
-    @mainstack = stack STACKSTYLE do
+    @mainstack = stack :margin => 20 do
       background salmon, :curve => 20
       border black, :curve => 20
       tagline "Login"
@@ -163,56 +174,60 @@ eof
     visit '/bbs'
   end
 
+  def load_bbs
+    background black
+    @@bbs_cache[:all] = @@bbs.forums('all')
+    @@bbs_cache[:todo] = @@bbs.forums('todo')
+    @@bbs_cache[:joined] = @@bbs.forums('joined')
+    visit '/bbs'
+  end
+
   def bbs
     background black
 
-    @mainstack = stack STACKSTYLE do
+    @mainstack = stack :margin => 20 do
       background aliceblue, :curve => 20
       border black, :curve => 20
       para "loading bbs..."
     end
     
-    Thread.new do
-      forums = @@bbs.forums('all')
-      forums_todo = (@@bbs.forums('todo').to_a.map{ |k| k[0] } - [1]).sort
-      forums_joined = (@@bbs.forums('joined').to_a.map{ |k| k[0]} - forums_todo - [1]).sort
-      forums_all = (forums.to_a.map{ |k| k[0]} - forums_joined - forums_todo - [1]).sort
-      forums_todo.each { |n| forums[n][:todo] = true }
-      forums_joined.each { |n| forums[n][:joined] = true }
-      # delete mail
-      forums.delete(1)
-      linklist, keypressproc = actions( [[ ' ', '[ ]first forum with unread', "/first_todo"],
-                                         [ 'q', '[q]uit', '/quit' ]
-                                        ] )
-      keypress { | key | keypressproc.call(key) }
-      @mainstack.clear do
-        background aliceblue, :curve => 20
-        border black, :curve => 20
-        para *linklist
-        #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
-        #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
-        [ ["Unread", forums_todo],
-          ["Subscribed", forums_joined],
-          ["Zapped", forums_all]].each do | pair |
-          group_name, ordered_ids = *pair
-          stack STACKSTYLE do
-            background white, :curve => 20
-            border black, :curve => 20
-            caption group_name
-            flow do
-              ordered_ids.each do | id |
-                data = forums[id]
-                stack :width => 200, :margin => 20 do
-                  if data[:todo]
-                    background ivory, :curve => 10
-                  elsif data[:joined]
-                    background lightgrey, :curve => 10
-                  else
-                    background darkslateblue, :curve => 10
-                  end
-                  border black, :curve => 10
-                  para link("#{id}> #{data[:name]}", :click => "/enter_forum/#{id}")
-                end
+    forums = @@bbs_cache[:all]
+    forums_todo = (@@bbs_cache[:todo].keys - [1]).sort
+    forums_joined = (@@bbs_cache[:joined].keys - forums_todo - [1]).sort
+    forums_all = (@@bbs_cache[:all].keys - forums_joined - forums_todo - [1]).sort
+    # delete mail
+    forums.delete(1)
+    action_list = []
+    if forums_todo.length > 0
+      action_list << [ ' ', '[ ]first forum with unread', "/first_todo"]
+    else
+      action_list << [ ' ', '[ ]refresh_forums', "/load_bbs"]
+    end
+    action_list << [ 'q', '[q]uit', '/quit' ]
+
+    linklist, keypressproc = actions( action_list )
+    keypress { | key | keypressproc.call(key) }
+    @mainstack.clear do
+      background aliceblue, :curve => 20
+      border black, :curve => 20
+      para *linklist
+      #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
+      #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
+      [ ["Unread", forums_todo, ivory],
+        ["Subscribed", forums_joined, lightgrey],
+        ["Zapped", forums_all, darkslateblue]].each do | group |
+        group_name, ordered_ids, coloring = *group
+        stack :margin => 20 do
+          background white, :curve => 20
+          border black, :curve => 20
+          caption group_name
+          flow do
+            ordered_ids.each do | id |
+              data = forums[id]
+              stack :width => 200, :margin => 20 do
+                background coloring, :curve => 10
+                border black, :curve => 10
+                para link("#{id}> #{data[:name]}", :click => "/enter_forum/#{id}")
               end
             end
           end
@@ -220,17 +235,19 @@ eof
       end
     end
   end
-  
 
-  def goto(id)
+  def goto_next_from(forum_id)
+    forum_id = forum_id.to_i
     # id is forum to jump *from*
-    id = id.to_i
-    para "marking read, moving on..."
-    Thread.new {
-      @the_forum = @@bbs.jump(id)
-      @the_forum.first_unread = @the_forum.noteids.sort.last.to_i + 1
-      visit '/first_todo'
-    }
+    cache = @@forum_cache[forum_id]
+    cache[:first_unread] = cache[:noteids].last + 1
+    record_last_read(forum_id)
+    todo_list = @@bbs_cache[:todo].keys.sort
+    if todo_list.length > 0
+      visit "/enter_forum/#{@@bbs_cache[:todo].keys.first}"
+    else
+      visit "/bbs"
+    end
   end
 
   def with_new_bbs_connection
@@ -293,13 +310,13 @@ eof
                                        [ 'b', 'read [b]ackward', 
                                          "/message/#{id}/#{noteids.last}/backward"],
                                        [ 'g', '[g]oto next forum with unread messages', 
-                                         "/goto/#{id}"],
+                                         "/goto_next_from/#{id}"],
                                        [ ' ', '[ ]first unread', "/first_unread/#{id}"],
                                        [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
                                       ] )
     
     keypress { | key |  keypressproc.call(key) }
-    @mainstack = stack STACKSTYLE do
+    @mainstack = stack :margin => 20 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       para "loading forum #{id}..."
@@ -345,14 +362,14 @@ eof
                                      ]
     keypress { | key |  keypressproc.call(key) }
     
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       para *linklist
       @info = @forum.forum_information
       the_body = @info[:body]
       body_urls = the_body.scan(URLRE)
-      stack STACKSTYLE do
+      stack :margin => 20 do
         background lightgrey, :curve => 10
         border black, :curve => 10
         caption "Forum moderator is #{@forum.admin}.  Total messages: #{@forum.noteids.last}."
@@ -368,7 +385,7 @@ eof
   def first_todo
     info "first_todo"
     background black
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       para "finding first forum with unread messages..."
@@ -388,7 +405,7 @@ eof
     background black
     cache = @@forum_cache[forum_id]
 
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background blanchedalmond, :curve => 20
       border black, :curve => 20
       para "finding first unread message in forum #{forum_id}..."
@@ -405,10 +422,10 @@ eof
   end
 
   def mark_unread(forum_id,msgnum)
-    @forum =  @@bbs.jump(forum_id)
-    first_unread_msg = @forum.first_unread.to_i
-    if msgnum.to_i < first_unread_msg
-      @forum.first_unread = msgnum
+    forum_id = forum_id.to_i; msgnum = msgnum.to_i
+    cache = @@forum_cache[forum_id]
+    if msgnum < cache[:first_unread]
+      cache[:first_unread] = msgnum
     end
     visit "/forum/#{forum_id}"
   end
@@ -427,6 +444,7 @@ eof
         if action.respond_to? :call
           action.call
         else
+          info "visiting <#{action}>"
           visit action
         end
       end
@@ -463,7 +481,7 @@ eof
     forum_id=forum_id.to_i
     msgnum=msgnum.to_i
     background black
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background gold, :curve => 20
       border black, :curve => 20
       @messagestack = stack { para "loading message #{msgnum} in forum #{forum_id}..." }
@@ -530,7 +548,7 @@ eof
                            "#{msg[:body]}" + 
                            "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
         
-        stack STACKSTYLE do
+        stack :margin => 20 do
           background aliceblue, :curve => 20
           border black, :curve => 20
           para @whole_message
@@ -550,7 +568,7 @@ eof
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
     quote = "#{@post.author} wrote:\n#{old_body}\n\n"
     background black
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background lime, :curve => 20
       border black, :curve => 20
       tagline "New Post"
@@ -566,7 +584,7 @@ eof
   
   def new_post(forum_id)
     background black
-    stack STACKSTYLE do
+    stack :margin => 20 do
       background lime, :curve => 20
       border black, :curve => 20
       tagline "New Post"
