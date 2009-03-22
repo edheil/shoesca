@@ -4,7 +4,7 @@ Shoes.setup do
 end
 
 require 'raccdoc'
-require 'sqlite3'
+#require 'sqlite3'
 require 'yaml/store'
 
 class RaccdocClient < Shoes
@@ -32,10 +32,15 @@ eof
  
   url '/', :login
   url '/forums', :forums
+  url '/quit', :quit
+  url '/quit_from_forum/(d+)', :quit_from_forum
   url '/goto/(\d+)', :goto
   url '/login', :login
   url '/license', :license
+  url '/enter_forum/(\d+)', :enter_forum
   url '/forum/(\d+)', :forum
+  url '/leave_forum/(\d+)', :leave_forum
+  url '/switch_forum/(\d+)/(\d+)', :switch_forum
   url '/foruminfo/(\d+)', :foruminfo
   url '/first_todo', :first_todo
   url '/first_unread/(\d+)', :first_unread
@@ -43,12 +48,13 @@ eof
   url '/mark_unread/(\d+)/(\d+)', :mark_unread
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
-  @@bbs, @msg_store = nil, nil
+  @@bbs, @@msg_store = nil, nil
   @@forum_cache = {}
-  @@msg_store = SQLite3::Database.new('messages.db')
-  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT, UNIQUE (forum_id, message_id) ON CONFLICT REPLACE);");
+#  @@msg_store = SQLite3::Database.new('messages.db')
+#  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT, UNIQUE (forum_id, message_id) ON CONFLICT REPLACE);");
 
   def license
+    info "license"
     background black
     stack STACKSTYLE do
       background aliceblue, :curve => 20
@@ -57,6 +63,35 @@ eof
       para LICENSE
     end
   end
+
+
+  def record_last_read(forum_id)
+    forum_id = forum_id.to_i
+    info "record_last_read for #{forum_id}"
+    cached = @@forum_cache[forum_id]
+    if cached
+      info "got cache"
+      info "seeing if #{ cached[:first_unread] } > #{ cached[:server_first_unread] }"
+      if cached[:first_unread] > cached[:server_first_unread]
+        info "yep"
+        forum = @@bbs.jump(forum_id)
+        info "setting first_unread to #{cached[:first_unread]}"
+        forum.first_unread = cached[:first_unread]
+        cached[:server_first_unread] = cached[:first_unread]
+      end
+    end
+  end
+
+  def quit_from_forum(id)
+    record_last_read(id)
+    exit()
+  end
+
+  def quit
+    exit()
+  end
+
+
 
   def login
     background black
@@ -110,13 +145,23 @@ eof
 
       para(link( 'license', :click => '/license' ))
 
-
       keypress do | key |
         if key == "\n"
           do_login
         end
       end
     end
+  end
+
+
+  def quit
+    exit()
+  end
+
+  def leave_forum(id)
+    info "leave forum #{id}"
+    record_last_read(id)
+    visit '/forums'
   end
 
   def forums
@@ -138,7 +183,7 @@ eof
       # delete mail
       forums.delete(1)
       linklist, keypressproc = actions( [[ ' ', '[ ]first forum with unread', "/first_todo"],
-                                         [ 'q', '[q]uit', Proc.new { exit() } ]
+                                         [ 'q', '[q]uit', '/quit' ]
                                         ] )
       keypress { | key | keypressproc.call(key) }
       @mainstack.clear do
@@ -167,7 +212,7 @@ eof
                     background darkslateblue, :curve => 10
                   end
                   border black, :curve => 10
-                  para link("#{id}> #{data[:name]}", :click => "/forum/#{id}")
+                  para link("#{id}> #{data[:name]}", :click => "/enter_forum/#{id}")
                 end
               end
             end
@@ -220,84 +265,102 @@ eof
     }
   end
 
-  def forum(id)
+  def switch_forum(old_id, new_id)
+    old_id, new_id = old_id.to_i, new_id.to_i
+    record_last_read(old_id)
+    visit "/enter_forum/#{new_id}"
+  end
+
+  def enter_forum(id)
+    info "enter_forum #{id}"
     id = id.to_i
     background black
-    
-    @mainstack = stack STACKSTYLE do
-      background blanchedalmond, :curve => 20
-      border black, :curve => 20
-      para "loading forum #{id}..."
+    # we pull stuff into forum_cache only when we enter a new forum.
+    forum = @@bbs.jump(id)
+    cache  = {}
+    first_unread = forum.first_unread.to_i
+    cache[:server_first_unread] = first_unread
+    cache[:first_unread] = first_unread
+    cache[:post_headers] = forum.post_headers
+    cache[:noteids] = forum.noteids.sort
+    sneakily_cache_forum(id, cache[:noteids])
+    cache[:name] = forum.name
+    @@forum_cache[id] = cache
+    visit "/forum/#{id}"
+  end
+
+  def forum(id)
+    info "forum #{id}"
+    id = id.to_i
+    background black
+    cache = @@forum_cache[id]
+    unless cache
+      visit "/enter_forum/#{id}"
     end
-
-
-    Thread.new {
-      @@forum_cache[id] = {}
-      @forum = @@bbs.jump(id)
-      first_unread = @forum.first_unread.to_i
-      @@forum_cache[id][:first_unread] = first_unread
-      @posts = @forum.post_headers
-      noteids = @forum.noteids.sort
-      @@forum_cache[id][:noteids] = noteids
-      sneakily_cache_forum(id, noteids)
-      @@forum_cache[id][:name] = @forum.name
-      msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
-      msgs_read = noteids.select { |msg| msg.to_i < first_unread }
-      info "got posts"
+    
+    first_unread = cache[:first_unread]
+    posts = cache[:post_headers]
+    noteids = cache[:noteids]
+    msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
+    msgs_read = noteids.select { |msg| msg.to_i < first_unread }
+    
     linklist, keypressproc = actions( [[ 'e', '[e]nter msg', "/new_post/#{id}"],
                                        [ 'i', '[i]nfo', "/foruminfo/#{id}"],
-                                       [ 'l', 'forum [l]ist', "/forums"],
-                                       [ 'f', 'read [f]orward', 
+                                       [ 'l', 'forum [l]ist', "/leave_forum/#{id}"],
+                                       [ 'f', 'read [f]orward',
                                          "/message/#{id}/#{noteids.first}/forward"],
                                        [ 'b', 'read [b]ackward', 
                                          "/message/#{id}/#{noteids.last}/backward"],
                                        [ 'g', '[g]oto next forum with unread messages', 
                                          "/goto/#{id}"],
                                        [ ' ', '[ ]first unread', "/first_unread/#{id}"],
-                                       [ 'q', '[q]uit', Proc.new { exit() } ]
+                                       [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
                                       ] )
     
     keypress { | key |  keypressproc.call(key) }
+    @mainstack = stack STACKSTYLE do
+      background blanchedalmond, :curve => 20
+      border black, :curve => 20
+      para "loading forum #{id}..."
+    end
 
-
-      @mainstack.clear do
-        background blanchedalmond, :curve => 20
-        border black, :curve => 20
-
-        para *linklist
-        [ [ "Unread", msgs_unread,  ],
-          [ "Read", msgs_read,  ]].each do | pair |
-          group_name, ordered_ids = *pair
-          info "adding #{group_name} stack"
-          stack :margin => 20 do
-            background white, :curve => 20
-            border black, :curve => 20
-            caption group_name
-            flow do
-              ordered_ids.reverse.each do | post_id |
-                post = @posts[post_id.to_s]
-                stack :margin => 20, :width => 200 do
-                  background ivory, :curve => 10
-                  border black, :curve => 10
-                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
-                  para post[:subject]
-                end
+    @mainstack.clear do
+      background blanchedalmond, :curve => 20
+      border black, :curve => 20
+      tagline cache[:name]
+      para *linklist
+      [ [ "Unread", msgs_unread,  ],
+        [ "Read", msgs_read,  ]].each do | pair |
+        group_name, ordered_ids = *pair
+        stack :margin => 20 do
+          background white, :curve => 20
+          border black, :curve => 20
+          caption group_name
+          flow do
+            ordered_ids.reverse.each do | post_id |
+              post = posts[post_id.to_s]
+              stack :margin => 20, :width => 200 do
+                background ivory, :curve => 10
+                border black, :curve => 10
+                para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
+                para post[:subject]
               end
             end
           end
         end
       end
-    }
+    end
   end
     
   def foruminfo(id)
+    info "foruminfo #{id}"
     @forum = @@bbs.jump(id)
     background black
     
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
                                       [ 'p', '[e]nter msg', "/new_post/#{id}"],
                                       [ " ", "[ ]first unread message", "/first_unread/#{id}" ],
-                                      [ "q", "[q]uit", Proc.new { exit()} ]
+                                      [ "q", "[q]uit", "/quit_from_forum/#{id}" ]
                                      ]
     keypress { | key |  keypressproc.call(key) }
     
@@ -322,6 +385,7 @@ eof
   end
     
   def first_todo
+    info "first_todo #{id}"
     background black
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
@@ -341,6 +405,7 @@ eof
   def first_unread(forum_id)
     info "first_unread for forum_id #{forum_id}"
     background black
+    cache = @@forum_cache[forum_id]
 
     stack STACKSTYLE do
       background blanchedalmond, :curve => 20
@@ -348,28 +413,14 @@ eof
       para "finding first unread message in forum #{forum_id}..."
     end
 
-    Thread.new {
-      @forum =  @@bbs.jump(forum_id)
-      noteids = @forum.noteids.map { |n| n.to_i }.sort
-      first_unread_msg = @forum.first_unread.to_i
-      first_unread_found = noteids.detect { |noteid| noteid >= first_unread_msg }
-      if first_unread_found
-        visit "/message/#{forum_id}/#{first_unread_found}/forward"
-      else
-        visit "/first_todo"
-      end
-   }
-  end
-
-  def mark_read(forum_id, msgnum)
-    first_unread_msg = @@forum_cache[forum_id][:first_unread]
-    if msgnum.to_i >= first_unread_msg
-      @@forum_cache[forum_id][:first_unread] = msgnum.to_i + 1
-      Thread.new {
-        with_new_bbs_connection { | bbs | bbs.jump(forum_id).first_unread = msgnum.to_i + 1 }
-      }
-    end 
-
+    noteids = cache[:noteids]
+    first_unread_msg = cache[:first_unread]
+    first_unread_found = noteids.detect { |noteid| noteid >= first_unread_msg }
+    if first_unread_found
+      visit "/message/#{forum_id}/#{first_unread_found}/forward"
+    else
+      visit "/first_todo"
+    end
   end
 
   def mark_unread(forum_id,msgnum)
@@ -380,7 +431,6 @@ eof
     end
     visit "/forum/#{forum_id}"
   end
-
 
   def actions(list)
     linklist = []
@@ -452,20 +502,13 @@ eof
     end
 
     Thread.new {
-      mark_read(forum_id, msgnum)
       post_ids = @@forum_cache[forum_id][:noteids]
       post_index = post_ids.index(msgnum)
       remaining = post_ids.length - post_index - 1
       msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
       msg_prev = post_ids[post_index - 1] if post_index > 0
-        
 
       msg = get_message_with_caching(forum_id, msgnum)
-      while not msg
-        info "waiting for message to show up in the cache..."
-        sleep 1
-        msg = get_message_from_db(@@msg_store, forum_id, msgnum)
-      end
       
       action_list = []
       if msg_prev
@@ -503,7 +546,7 @@ eof
           action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
         end
       end
-      action_list << [ "q", "[q]uit", Proc.new { exit()} ]
+      action_list << [ "q", "[q]uit", "/quit_from_forum/#{forum_id}" ]
       
       linklist, keypressproc = actions(action_list)
       keypress { | key |  
@@ -527,9 +570,12 @@ eof
           end
         end
       end
+      if @@forum_cache[forum_id][:first_unread] <= msgnum
+        @@forum_cache[forum_id][:first_unread] = msgnum + 1
+      end
     }
   end
-
+  
   def new_reply(forum_id, msgnum)
     @post = @@bbs.jump(forum_id).read(msgnum)
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
