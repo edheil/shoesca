@@ -4,7 +4,6 @@ Shoes.setup do
 end
 
 require 'raccdoc'
-#require 'sqlite3'
 require 'yaml/store'
 
 class RaccdocClient < Shoes
@@ -31,7 +30,7 @@ eof
   URLRE = Regexp.new('https?://[^ \n\)]+')
  
   url '/', :login
-  url '/forums', :forums
+  url '/bbs', :bbs
   url '/quit', :quit
   url '/quit_from_forum/(d+)', :quit_from_forum
   url '/goto/(\d+)', :goto
@@ -48,11 +47,9 @@ eof
   url '/mark_unread/(\d+)/(\d+)', :mark_unread
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
-  @@bbs, @@msg_store = nil, nil
+  @@bbs = nil
   @@forum_cache = {}
   @@bbs_cache = {}
-#  @@msg_store = SQLite3::Database.new('messages.db')
-#  @@msg_store.execute("CREATE TABLE IF NOT EXISTS messages(forum_id INTEGER, message_id INTEGER, date TEXT, body TEXT, author TEXT, authority TEXT, UNIQUE (forum_id, message_id) ON CONFLICT REPLACE);");
 
   def license
     info "license"
@@ -127,7 +124,7 @@ eof
           @store.transaction do
             @store['username'], @store['password'] = @username, @password
           end
-          visit '/forums'
+          visit '/bbs'
         end
      end
     end
@@ -163,16 +160,16 @@ eof
   def leave_forum(id)
     info "leave forum #{id}"
     record_last_read(id)
-    visit '/forums'
+    visit '/bbs'
   end
 
-  def forums
+  def bbs
     background black
 
     @mainstack = stack STACKSTYLE do
       background aliceblue, :curve => 20
       border black, :curve => 20
-      para "loading forums..."
+      para "loading bbs..."
     end
     
     Thread.new do
@@ -250,23 +247,6 @@ eof
   end
   
   
-  def sneakily_cache_forum(forum_id, note_ids)
-    # if the main message db doesn't exist, don't bother making a new one
-    return unless @@msg_store
-    Thread.new {
-      # this is a separate thread; we need our own bbs and db handle
-      with_new_bbs_connection do | bbs |
-        msg_store = SQLite3::Database.new('messages.db')
-        sql = 'SELECT message_id FROM messages WHERE forum_id = ? AND message_id IN (' +
-          Array.new(note_ids.length, '?').join(', ') +' ) ;'
-        already_stored = msg_store.execute(sql, forum_id, *note_ids).flatten.map {|_|_.to_i}
-        (note_ids - already_stored).each do | msgnum |
-          get_message_from_bbs_and_store(forum_id, msgnum, bbs, msg_store)
-        end
-      end
-    }
-  end
-
   def switch_forum(old_id, new_id)
     old_id, new_id = old_id.to_i, new_id.to_i
     record_last_read(old_id)
@@ -285,7 +265,6 @@ eof
     cache[:first_unread] = first_unread
     cache[:post_headers] = forum.post_headers
     cache[:noteids] = forum.noteids.sort
-    sneakily_cache_forum(id, cache[:noteids])
     cache[:name] = forum.name
     @@forum_cache[id] = cache
     visit "/forum/#{id}"
@@ -399,7 +378,7 @@ eof
       forum_id = forums_todo[0]
       visit "/enter_forum/#{forum_id}"
     else
-      visit "/forums"
+      visit "/bbs"
     end
   end
 
@@ -471,25 +450,12 @@ eof
     return msg
   end
 
-  def get_message_from_bbs_and_store(forum_id, msgnum, bbs=nil, msg_store=nil)
-    bbs ||=@@bbs
-    msg_store ||=@@msg_store
+  def get_message(forum_id, msgnum)
     msg = {}
-    post = bbs.jump(forum_id).read(msgnum)
+    post = @@bbs.jump(forum_id).read(msgnum)
     [:date, :author, :body, :authority].each { |k| msg[k] = post.send(k) }
     msg[:message_id] = msgnum
     msg[:forum_id] = forum_id
-    store_message(msg_store, msg) if msg_store
-    msg
-  end
-
-  def get_message_with_caching(forum_id, msgnum, bbs=nil, msg_store=nil)
-    bbs ||=@@bbs
-    msg_store ||=@@msg_store
-    msg = get_message_from_db(@@msg_store, forum_id, msgnum) if @@msg_store
-    unless msg
-      msg = get_message_from_bbs_and_store(forum_id, msgnum, bbs, msg_store)
-    end
     msg
   end
 
@@ -503,60 +469,61 @@ eof
       @messagestack = stack { para "loading message #{msgnum} in forum #{forum_id}..." }
     end
 
-    Thread.new {
-      post_ids = @@forum_cache[forum_id][:noteids]
-      post_index = post_ids.index(msgnum)
-      remaining = post_ids.length - post_index - 1
-      msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
-      msg_prev = post_ids[post_index - 1] if post_index > 0
-
-      msg = get_message_with_caching(forum_id, msgnum)
-      
-      action_list = []
+    post_ids = @@forum_cache[forum_id][:noteids]
+    post_index = post_ids.index(msgnum)
+    remaining = post_ids.length - post_index - 1
+    msg_next = post_ids[post_index + 1] if post_index < (post_ids.length - 1)
+    msg_prev = post_ids[post_index - 1] if post_index > 0
+    
+    action_list = []
+    if msg_prev
+      action_list << [ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}/backward"]
+    end
+    if msg_next
+      action_list << [ "n", "[n]ext","/message/#{forum_id}/#{msg_next}/forward" ]
+    end
+    action_list << [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ]
+    action_list << [ "e" , "[e]nter message",  "/new_post/#{forum_id}" ]
+    action_list << [ "s" , "[s]top reading", "/forum/#{forum_id}" ]
+    action_list << [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ]
+    action_list << [ "c", "[c]opy to clipboard",  
+                     Proc.new { self.clipboard=@whole_message; 
+                       alert( "Copied to clipboard.") } ]
+    if direction == 'forward'
+      if msg_next
+        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
+      else
+        action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+      end
+      if msg_prev 
+        action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_prev}/backward" ]
+      else
+        action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
+      end
+    elsif direction == 'backward'
       if msg_prev
-        action_list << [ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}/backward"]
+        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
+      else
+        action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
       end
       if msg_next
-        action_list << [ "n", "[n]ext","/message/#{forum_id}/#{msg_next}/forward" ]
+        action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_next}/forward" ]
+      else
+        action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
       end
-      action_list << [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ]
-      action_list << [ "s" , "[s]top reading", "/forum/#{forum_id}" ]
-      action_list << [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ]
-      action_list << [ "c", "[c]opy to clipboard",  
-                       Proc.new { self.clipboard=@whole_message; 
-                         alert( "Copied to clipboard.") } ]
-      if direction == 'forward'
-        if msg_next
-          action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
-        else
-          action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
-        end
-        if msg_prev 
-          action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_prev}/backward" ]
-        else
-          action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
-        end
-      elsif direction == 'backward'
-        if msg_prev
-          action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
-        else
-          action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
-        end
-        if msg_next
-          action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_next}/forward" ]
-        else
-          action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
-        end
-      end
-      action_list << [ "q", "[q]uit", "/quit_from_forum/#{forum_id}" ]
+    end
+    action_list << [ "q", "[q]uit", "/quit_from_forum/#{forum_id}" ]
       
-      linklist, keypressproc = actions(action_list)
-      keypress { | key |  
+    linklist, keypressproc = actions(action_list)
+    keypress { | key |  
         keypressproc.call(key) 
-      }
+    }
 
+#    Thread.new {
+      msg = get_message(forum_id, msgnum)
+      
       body_urls = msg[:body].scan(URLRE)
-
+      
       @messagestack.clear do
         para *linklist
         @whole_message = ( "#{msg[:date]} from #{msg[:author]}\n" + 
@@ -575,9 +542,9 @@ eof
       if @@forum_cache[forum_id][:first_unread] <= msgnum
         @@forum_cache[forum_id][:first_unread] = msgnum + 1
       end
-    }
+ #   }
   end
-  
+    
   def new_reply(forum_id, msgnum)
     @post = @@bbs.jump(forum_id).read(msgnum)
     old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
