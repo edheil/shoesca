@@ -30,7 +30,9 @@ eof
   HORIZON = 200 # the range of noteids retrieved before or after the first_unread
  
   url '/', :login
+  url '/login_error/(.+)', :login_error
   url '/bbs', :bbs
+  url '/do_login/([^\/]+)/(.+)', :do_login
   url '/load_bbs', :load_bbs
   url '/quit_from_forum/(\d+)', :quit_from_forum
   url '/quit', :quit
@@ -51,12 +53,23 @@ eof
   @@forum_cache = {}
   @@bbs_cache = {}
 
+  def randcolor(bias=nil, alpha = 1.0)
+    if bias == :dark
+      rgb( (rand/2 + 0.2), (rand/2 + 0.2), (rand/2 + 0.2), alpha )
+    elsif bias == :light
+      rgb( (rand/2 + 0.5), (rand/2 + 0.5), (rand/2 + 0.5), alpha )
+    elsif bias == :realdark
+      rgb( rand/4, rand/4, rand/4, alpha)
+    else
+      rgb( rand * 0.8 + 0.2, rand * 0.8 + 0.2, rand * 0.8 + 0.2, alpha )
+    end
+  end
+
   def license
     info "license"
     background black
     stack :margin => 20 do
       background aliceblue, :curve => 20
-      border black, :curve => 20
       para link('back', :click => '/login')
       para LICENSE
     end
@@ -68,23 +81,16 @@ eof
     info "record_last_read for #{forum_id}"
     cached = @@forum_cache[forum_id]
     if cached
-      info "got cache"
-      info "seeing if #{ cached[:first_unread] } != #{ cached[:server_first_unread] }"
       if cached[:first_unread] != cached[:server_first_unread]
-        info "yep.  must modify server's first_unread"
         forum = @@bbs.jump(forum_id)
-        info "setting first_unread to #{cached[:first_unread]}"
         forum.first_unread = cached[:first_unread]
         cached[:server_first_unread] = cached[:first_unread]
 
-        info "after the change..."
         if cached[:first_unread] > cached[:noteids].last
-          info "first_unread is greater than last_note.  deleting #{forum_id} from todo"
           @@bbs_cache[:todo].delete(forum_id)
         end
 
         if cached[:first_unread] <= cached[:noteids].last
-          info "first_unread is less than or equal to last_note.  adding #{forum_id} to todo"
           @@bbs_cache[:todo][forum_id] = @@bbs_cache[:all][forum_id]
         end
       end
@@ -102,63 +108,54 @@ eof
     exit()
   end
 
+  def login_error(error)
+    stack do
+      para err.message
+      link("try again",:click => '/')
+    end
+  end
 
+  def do_login(username, password)
+    begin
+      @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
+                                      :host => HOST,
+                                      :port => PORT
+                                      )
+      YAML::Store.new('bbsconfig.yaml').transaction do |store|
+        store['username'], store['password'] = username, password
+      end
+      visit '/load_bbs'
+    rescue RuntimeError => err
+      debug "error: #{err.message}"
+      @@bbs = nil
+      visit "/login_error/#{err.message}"
+    end
+  end
 
   def login
     background black
-    @store = YAML::Store.new('bbsconfig.yaml')
-    @username, @password = nil, nil
-    @store.transaction(true) do
-      @username, @password = @store['username'], @store['password']
+    username, password = nil, nil
+    YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
+      username, password = store['username'], store['password']
     end
 
-    def do_login
-      @@username = @username_line.text
-      @@password = @password_line.text
-      @mainstack.append do
-        para "logging in..."
-      end
-      Thread.new do
-        begin
-          @@bbs = Raccdoc::Connection.new(:user => @@username, :password => @@password,
-                                          :host => HOST,
-                                          :port => PORT
-                                          )
-        rescue RuntimeError => err
-          debug "error: #{err.message}"
-          @@bbs = nil
-          @mainstack.append do
-            para err.message
-          end
-        end
-        if @@bbs
-          @store.transaction do
-            @store['username'], @store['password'] = @username, @password
-          end
-          visit '/load_bbs'
-        end
-     end
-    end
-
-
-    @mainstack = stack :margin => 20 do
-      background salmon, :curve => 20
-      border black, :curve => 20
-      tagline "Login"
+    stack :margin => 20 do
+      background randcolor(:light), :curve => 20
+      tagline "Login", :stroke => randcolor(:realdark)
       para "username:"
-      @username_line = edit_line "#{ @username }"
+      @username_line = edit_line "#{ username }"
       para "password:"
-      @password_line = edit_line "#{ @password }", :secret => true
+      @password_line = edit_line "#{ password }", :secret => true
 
       button "login" do
-        do_login
+        visit "/do_login/#{@username_line.text}/#{@password_line.text}"
       end
 
       para(link( 'license', :click => '/license' ))
 
       keypress do | key |
         if key == "\n"
-          do_login
+          visit "/do_login/#{@username_line.text}/#{@password_line.text}"
         end
       end
     end
@@ -187,7 +184,6 @@ eof
 
     @mainstack = stack :margin => 20 do
       background aliceblue, :curve => 20
-      border black, :curve => 20
       para "loading bbs..."
     end
     
@@ -199,7 +195,7 @@ eof
     forums.delete(1)
     action_list = []
     if forums_todo.length > 0
-      action_list << [ ' ', '[ ]first forum with unread', "/forum/#{forums_todo.first}"]
+      action_list << [ ' ', '[ ]first forum with unread', "/enter_forum/#{forums_todo.first}"]
     else
       action_list << [ ' ', '[ ]refresh_forums', "/load_bbs"]
     end
@@ -208,8 +204,7 @@ eof
     linklist, keypressproc = actions( action_list )
     keypress { | key | keypressproc.call(key) }
     @mainstack.clear do
-      background aliceblue, :curve => 20
-      border black, :curve => 20
+      background randcolor(:light, 0.5), :curve => 20
       para *linklist
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
       #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
@@ -218,15 +213,14 @@ eof
         ["Zapped", forums_all, darkslateblue]].each do | group |
         group_name, ordered_ids, coloring = *group
         stack :margin => 20 do
-          background white, :curve => 20
-          border black, :curve => 20
+          background randcolor(:light, 0.5), :curve => 20
           caption group_name
           flow do
+            coloring = randcolor(:light, 0.5)
             ordered_ids.each do | id |
               data = forums[id]
               stack :width => 200, :margin => 20 do
                 background coloring, :curve => 10
-                border black, :curve => 10
                 para link("#{id}> #{data[:name]}", :click => "/enter_forum/#{id}")
               end
             end
@@ -264,10 +258,18 @@ eof
     forum = @@bbs.jump(id)
     cache  = {}
     first_unread = forum.first_unread.to_i
+    info "first_unread: #{ first_unread.inspect }"
     cache[:server_first_unread] = first_unread
     cache[:first_unread] = first_unread
+    info "first unread: #{first_unread.inspect}"
+    info "forum_id info: #{ @@bbs_cache[:all][id].inspect }"
     noterange = "#{ first_unread - HORIZON }-#{ first_unread + HORIZON }"
     cache[:noteids] = forum.noteids(noterange).sort
+    if cache[:noteids].length == 0 # uh oh
+      noterange = "#{ @@bbs_cache[:all][id][:lastnote].to_i - HORIZON }-#{ @@bbs_cache[:all][id][:lastnote] }"
+      cache[:noteids] = forum.noteids(noterange).sort
+    end
+    info "noterange: #{noterange}"
     cache[:post_headers] = forum.post_headers(noterange)
     cache[:name] = forum.name
     cache[:post_ok] = forum.post?
@@ -309,28 +311,25 @@ eof
     keypress { | key |  keypressproc.call(key) }
     @mainstack = stack :margin => 20 do
       background blanchedalmond, :curve => 20
-      border black, :curve => 20
       para "loading forum #{id}..."
     end
 
     @mainstack.clear do
       background blanchedalmond, :curve => 20
-      border black, :curve => 20
-      tagline cache[:name]
+      tagline cache[:name], :stroke => randcolor(:realdark)
       para *linklist
       [ [ "Unread", msgs_unread,  ],
         [ "Read", msgs_read,  ]].each do | pair |
         group_name, ordered_ids = *pair
         stack :margin => 20 do
-          background white, :curve => 20
-          border black, :curve => 20
+          background randcolor(:light, 0.5), :curve => 20
           caption group_name
+          the_color = randcolor(:light)
           flow do
             ordered_ids.reverse.each do | post_id |
               post = posts[post_id.to_s]
               stack :margin => 20, :width => 200 do
-                background ivory, :curve => 10
-                border black, :curve => 10
+                background the_color, :curve => 10
                 para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
                 para post[:subject]
               end
@@ -354,7 +353,6 @@ eof
     
     stack :margin => 20 do
       background blanchedalmond, :curve => 20
-      border black, :curve => 20
       para *linklist
       @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
       info = @@forum_cache[:forum_info]
@@ -362,7 +360,6 @@ eof
       body_urls = the_body.scan(URLRE)
       stack :margin => 20 do
         background lightgrey, :curve => 10
-        border black, :curve => 10
         caption "Forum moderator is #{@@forum_cache[:admin]}."
         caption "Forum info last updated #{info[:date]} by #{info[:from]}"
         para "#{info[:body]}"
@@ -381,7 +378,6 @@ eof
 
     stack :margin => 20 do
       background blanchedalmond, :curve => 20
-      border black, :curve => 20
       para "finding first unread message in forum #{forum_id}..."
     end
 
@@ -439,11 +435,6 @@ eof
     forum_id=forum_id.to_i
     msgnum=msgnum.to_i
     background black
-    stack :margin => 20 do
-      background gold, :curve => 20
-      border black, :curve => 20
-      @messagestack = stack { para "loading message #{msgnum} in forum #{forum_id}..." }
-    end
 
     post_ids = @@forum_cache[forum_id][:noteids]
     post_index = post_ids.index(msgnum)
@@ -502,11 +493,11 @@ eof
                        "#{msg[:body]}" + 
                        "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
 
-    @messagestack.clear do
+    stack :margin => 20 do
+      background randcolor(:light, 0.5), :curve => 20
       para *linklist
       stack :margin => 20 do
-        background aliceblue, :curve => 20
-        border black, :curve => 20
+        background randcolor(:light), :curve => 20
         para @whole_message
         body_urls.each do | a_url |
           para link(a_url, :click => a_url)
@@ -524,9 +515,8 @@ eof
     quote = "#{@post.author} wrote:\n#{old_body}\n\n"
     background black
     stack :margin => 20 do
-      background lime, :curve => 20
-      border black, :curve => 20
-      tagline "New Post"
+      background randcolor(:light, 0.5), :curve => 20
+      tagline "New Post", :stroke => randcolor(:realdark)
       para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
       @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
       button "post" do
@@ -540,9 +530,8 @@ eof
   def new_post(forum_id)
     background black
     stack :margin => 20 do
-      background lime, :curve => 20
-      border black, :curve => 20
-      tagline "New Post"
+      background randcolor(:light, 0.5), :curve => 20
+      tagline "New Post", :stroke => randcolor(:realdark)
       para link("back", :click => "/forum/#{forum_id}")
       @post_box = edit_box :width => 500, :height => 300, :margin => 20
       button "post" do
