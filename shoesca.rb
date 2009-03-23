@@ -53,17 +53,23 @@ eof
   @@forum_cache = {}
   @@bbs_cache = {}
 
-  def randcolor(bias=nil, alpha = 1.0)
-    if bias == :dark
-      rgb( (rand/2 + 0.2), (rand/2 + 0.2), (rand/2 + 0.2), alpha )
-    elsif bias == :light
-      rgb( (rand/2 + 0.5), (rand/2 + 0.5), (rand/2 + 0.5), alpha )
-    elsif bias == :realdark
-      rgb( rand/4, rand/4, rand/4, alpha)
-    else
-      rgb( rand * 0.8 + 0.2, rand * 0.8 + 0.2, rand * 0.8 + 0.2, alpha )
-    end
+  def tweakcolor(r, g, b, v)
+
   end
+
+  def randcolor(bias=nil, alpha = 1.0)
+    target, range = case bias
+                    when :dark: [ 0.3, 0.3 ]
+                  when :light: [0.8, 0.4]
+                  when :realdark: [ 0.1, 0.2]
+                  else [0.5, 0.6]
+                  end
+    rgb( ( (rand - 0.5) * range ) + target,
+         ( (rand - 0.5) * range ) + target,
+         ( (rand - 0.5) * range ) + target,
+         alpha)
+  end
+
 
   def license
     info "license"
@@ -142,7 +148,7 @@ eof
     stack :margin => 20 do
       background randcolor(:light), :curve => 20
       stack :margin => 20 do
-        tagline "Login", :stroke => randcolor(:realdark)
+        tagline "Login", :stroke => randcolor(:realdark), :align => right
         para "username:"
         @username_line = edit_line "#{ username }"
         para "password:"
@@ -183,12 +189,6 @@ eof
 
   def bbs
     background black
-
-    @mainstack = stack :margin => 20 do
-      background aliceblue, :curve => 20
-      para "loading bbs..."
-    end
-    
     forums = @@bbs_cache[:all]
     forums_todo = (@@bbs_cache[:todo].keys - [1]).sort
     forums_joined = (@@bbs_cache[:joined].keys - forums_todo - [1]).sort
@@ -205,7 +205,7 @@ eof
 
     linklist, keypressproc = actions( action_list )
     keypress { | key | keypressproc.call(key) }
-    @mainstack.clear do
+    stack :margin => 20 do
       background randcolor(:light, 0.5), :curve => 20
       flow(:margin_left => 20, :margin_top => 20) { para *linklist }
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
@@ -311,20 +311,16 @@ eof
                                       ] )
     
     keypress { | key |  keypressproc.call(key) }
-    @mainstack = stack :margin => 20 do
-      background blanchedalmond, :curve => 20
-      para "loading forum #{id}..."
-    end
-
-    @mainstack.clear do
-      background blanchedalmond, :curve => 20
-      tagline cache[:name], :stroke => randcolor(:realdark), :margin => 20
-      flow(:margin_left => 20, :margin_top => 20) { para *linklist }
+    stack :margin => 20 do
+      background randcolor(:dark), :curve => 20
+      flow(:margin => 20) { para *linklist }
+      tagline( cache[:name], :stroke => randcolor(:realdark), 
+               :margin => 20, :align => 'right')
       [ [ "Unread", msgs_unread,  ],
         [ "Read", msgs_read,  ]].each do | pair |
         group_name, ordered_ids = *pair
         stack :margin => 20 do
-          background randcolor(:light, 0.5), :curve => 20
+          background randcolor(nil, 0.5), :curve => 20
           caption group_name, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
           flow do
             ordered_ids.reverse.each do | post_id |
@@ -495,7 +491,7 @@ eof
                        "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
 
     stack :margin => 20 do
-      background randcolor, :curve => 20
+      background randcolor(:dark), :curve => 20
       flow(:margin_left => 20, :margin_top => 20) { para *linklist }
       stack :margin => 20 do
         background rgb(1.0,1.0,1.0,0.8), :curve => 20
@@ -517,13 +513,15 @@ eof
     background black
     stack :margin => 20 do
       background randcolor(:light, 0.5), :curve => 20
-      tagline "New Post", :stroke => randcolor(:realdark)
-      para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
-      @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
-      button "post" do
-        text = @post_box.text
-        new_post = @@bbs.jump(forum_id).post(text)
-        visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+      stack :margin => 20 do
+        tagline "New Post", :stroke => randcolor(:realdark), :align => 'right'
+        para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
+        @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
+        button "post" do
+          text = @post_box.text
+          new_post = @@bbs.jump(forum_id).post(text)
+          visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+        end
       end
     end
   end
@@ -532,16 +530,20 @@ eof
     background black
     stack :margin => 20 do
       background randcolor(:light, 0.5), :curve => 20
-      tagline "New Post", :stroke => randcolor(:realdark)
-      para link("back", :click => "/forum/#{forum_id}")
-      @post_box = edit_box :width => 500, :height => 300, :margin => 20
-      button "post" do
-        text = @post_box.text
-        new_post = @@bbs.jump(forum_id).post(text)
-        visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+      stack :margin => 20 do
+        tagline "New Post", :stroke => randcolor(:realdark), :align => right
+        para link("back", :click => "/forum/#{forum_id}")
+        @post_box = edit_box :width => 500, :height => 300, :margin => 20
+        button "post" do
+          text = @post_box.text
+          new_post = @@bbs.jump(forum_id).post(text)
+          visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+        end
       end
     end
   end
 end
+
+
 
 Shoes.app :width => 800
