@@ -141,17 +141,19 @@ eof
 
     stack :margin => 20 do
       background randcolor(:light), :curve => 20
-      tagline "Login", :stroke => randcolor(:realdark)
-      para "username:"
-      @username_line = edit_line "#{ username }"
-      para "password:"
-      @password_line = edit_line "#{ password }", :secret => true
-
-      button "login" do
-        visit "/do_login/#{@username_line.text}/#{@password_line.text}"
+      stack :margin => 20 do
+        tagline "Login", :stroke => randcolor(:realdark)
+        para "username:"
+        @username_line = edit_line "#{ username }"
+        para "password:"
+        @password_line = edit_line "#{ password }", :secret => true
+        
+        button "login" do
+          visit "/do_login/#{@username_line.text}/#{@password_line.text}"
+        end
+        
+        para(link( 'license', :click => '/license' ))
       end
-
-      para(link( 'license', :click => '/license' ))
 
       keypress do | key |
         if key == "\n"
@@ -205,7 +207,7 @@ eof
     keypress { | key | keypressproc.call(key) }
     @mainstack.clear do
       background randcolor(:light, 0.5), :curve => 20
-      para *linklist
+      flow(:margin_left => 20, :margin_top => 20) { para *linklist }
       #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
       #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
       [ ["Unread", forums_todo, ivory],
@@ -214,9 +216,9 @@ eof
         group_name, ordered_ids, coloring = *group
         stack :margin => 20 do
           background randcolor(:light, 0.5), :curve => 20
-          caption group_name
+          caption group_name, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
           flow do
-            coloring = randcolor(:light, 0.5)
+            coloring = rgb(1.0,1.0,1.0, 0.5)
             ordered_ids.each do | id |
               data = forums[id]
               stack :width => 200, :margin => 20 do
@@ -316,20 +318,19 @@ eof
 
     @mainstack.clear do
       background blanchedalmond, :curve => 20
-      tagline cache[:name], :stroke => randcolor(:realdark)
-      para *linklist
+      tagline cache[:name], :stroke => randcolor(:realdark), :margin => 20
+      flow(:margin_left => 20, :margin_top => 20) { para *linklist }
       [ [ "Unread", msgs_unread,  ],
         [ "Read", msgs_read,  ]].each do | pair |
         group_name, ordered_ids = *pair
         stack :margin => 20 do
           background randcolor(:light, 0.5), :curve => 20
-          caption group_name
-          the_color = randcolor(:light)
+          caption group_name, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
           flow do
             ordered_ids.reverse.each do | post_id |
               post = posts[post_id.to_s]
               stack :margin => 20, :width => 200 do
-                background the_color, :curve => 10
+                background rgb(1.0,1.0,1.0, 0.5), :curve => 10
                 para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
                 para post[:subject]
               end
@@ -353,7 +354,7 @@ eof
     
     stack :margin => 20 do
       background blanchedalmond, :curve => 20
-      para *linklist
+      flow(:margin_left => 20, :margin_top => 20) { para *linklist }
       @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
       info = @@forum_cache[:forum_info]
       the_body = info[:body]
@@ -494,10 +495,10 @@ eof
                        "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
 
     stack :margin => 20 do
-      background randcolor(:light, 0.5), :curve => 20
-      para *linklist
+      background randcolor, :curve => 20
+      flow(:margin_left => 20, :margin_top => 20) { para *linklist }
       stack :margin => 20 do
-        background randcolor(:light), :curve => 20
+        background rgb(1.0,1.0,1.0,0.8), :curve => 20
         para @whole_message
         body_urls.each do | a_url |
           para link(a_url, :click => a_url)
