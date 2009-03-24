@@ -44,7 +44,6 @@ eof
   url '/leave_forum/(\d+)', :leave_forum
   url '/switch_forum/(\d+)/(\d+)', :switch_forum
   url '/foruminfo/(\d+)', :foruminfo
-  url '/first_unread/(\d+)', :first_unread
   url '/message/(\d+)/(\d+)/(.*)', :message
   url '/mark_unread/(\d+)/(\d+)', :mark_unread
   url '/new_post/(\d+)', :new_post
@@ -403,10 +402,13 @@ eof
                    [ 'b', 'read [b]ackward', 
                      "/message/#{id}/#{noteids.last}/backward"],
                    [ 'g', '[g]oto next forum with unread messages', 
-                     "/goto_next_from/#{id}"],
-                   [ ' ', '[ ]first unread', "/first_unread/#{id}"],
-                   [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
-                  ]
+                     "/goto_next_from/#{id}"]]
+    if msgs_unread.length > 0
+      actionlist << [ ' ', '[ ]first unread', "/message/#{id}/#{msgs_unread[0]}/forward"]
+    else
+      actionlist << [ ' ', '[ ]forum list', "/leave_forum/#{id}"]
+    end
+    actionlist << [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
     
     linklist, keypressproc = actions(actionlist)
     
@@ -442,7 +444,6 @@ eof
 
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
                                       [ 'p', '[e]nter msg', "/new_post/#{id}"],
-                                      [ " ", "[ ]first unread message", "/first_unread/#{id}" ],
                                       [ "q", "[q]uit", "/quit_from_forum/#{id}" ]
                                      ]
     keypress { | key |  keypressproc.call(key) }
@@ -465,25 +466,6 @@ eof
           end
         end
       end
-    end
-  end
-
-  def first_unread(forum_id)
-    info "first_unread for forum_id #{forum_id}"
-    forum_id = forum_id.to_i
-    cache = @@forum_cache[forum_id]
-
-    page_box do
-      para "finding first unread message in forum #{forum_id}..."
-    end
-
-    noteids = cache[:noteids]
-    first_unread_msg = cache[:first_unread]
-    first_unread_found = noteids.detect { |noteid| noteid >= first_unread_msg }
-    if first_unread_found
-      visit "/message/#{forum_id}/#{first_unread_found}/forward"
-    else
-      visit "/leave_forum/#{forum_id}"
     end
   end
 
