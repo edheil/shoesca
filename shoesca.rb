@@ -53,32 +53,63 @@ eof
   @@forum_cache = {}
   @@bbs_cache = {}
 
-  def show_page
-    info "show_page"
+  def page_box
+    st = nil
     background black
     stack  :margin => 20 do
       background randcolor(:dark), :curve => 20
-      stack :margin => 20 do
+      st = stack :margin => 20 do
         yield if block_given?
       end
     end
+    st
   end
 
-  def show_section
-    info "show_section: background"
+
+  def section_box
+    st = nil
     stack :margin => 20 do
       background randcolor(:light, 0.5), :curve => 20
-      stack :margin => 20 do
+      st = stack :margin => 20 do
         info "yielding..."
         yield if block_given?
       end
     end
+    st
   end
-  
-  def show_chunk(coloring=nil)
-    coloring ||= rgb(1.0, 1.0, 1.0, 0.5)
+
+  def chunk_section_box(text, hidden=true)
+    the_flow = nil
+    section_box do
+      flow(:click => Proc.new { the_flow.toggle },
+           :margin => 20
+           ) do 
+        background rgb(1.0, 1.0, 1.0, 0.5), :curve => 20
+        caption text, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
+      end
+      the_flow = flow :hidden => hidden do
+        yield
+      end
+    end
+  end
+
+  def header_box(linklist=[], text = "")
+    section_box do
+      flow do
+        flow( :width => -200) do
+          para *linklist 
+        end
+        flow( :width => 200) do
+          tagline( text, :stroke => randcolor(:realdark), 
+                   :margin => 20, :align => 'right')
+        end
+      end
+    end
+  end
+
+  def chunk_box
     stack :width => 200 do
-      background coloring, :curve => 10, :margin => 10
+      background rgb(1.0, 1.0, 1.0, 0.5), :curve => 10, :margin => 20
       stack :margin => 20 do
         yield if block_given?
       end
@@ -88,10 +119,10 @@ eof
   def randcolor(bias=nil, alpha = 1.0)
     target, range = case bias
                     when :dark: [ 0.3, 0.3 ]
-                  when :light: [0.8, 0.4]
-                  when :realdark: [ 0.1, 0.2]
-                  else [0.5, 0.6]
-                  end
+                    when :light: [0.8, 0.4]
+                    when :realdark: [ 0.1, 0.2]
+                    else [0.5, 0.6]
+                    end
     rgb( ( (rand - 0.5) * range ) + target,
          ( (rand - 0.5) * range ) + target,
          ( (rand - 0.5) * range ) + target,
@@ -101,8 +132,8 @@ eof
 
   def license
     info "license"
-    show_page do
-      show_section do
+    page_box do
+      section_box do
         background aliceblue, :curve => 20
         para link('back', :click => '/login')
         para LICENSE
@@ -110,32 +141,54 @@ eof
     end
   end
 
+  def recording_last_read(forum_id)
+    if should_record_last_read(forum_id)
+      clear do
+        page_box do
+          para "recording last read message..."
+        end
+      end
+      Thread.new do
+        record_last_read(forum_id)
+        yield
+      end
+    else
+      yield
+    end
+  end
+
+  def should_record_last_read(forum_id)
+    forum_id = forum_id.to_i
+    info "should_record_last_read for #{forum_id}"
+    cached = @@forum_cache[forum_id]
+    cached[:first_unread] != cached[:server_first_unread]
+  end
 
   def record_last_read(forum_id)
     forum_id = forum_id.to_i
     info "record_last_read for #{forum_id}"
     cached = @@forum_cache[forum_id]
-    if cached
-      if cached[:first_unread] != cached[:server_first_unread]
-        forum = @@bbs.jump(forum_id)
-        forum.first_unread = cached[:first_unread]
-        cached[:server_first_unread] = cached[:first_unread]
-
-        if cached[:first_unread] > cached[:noteids].last
-          @@bbs_cache[:todo].delete(forum_id)
-        end
-
-        if cached[:first_unread] <= cached[:noteids].last
-          @@bbs_cache[:todo][forum_id] = @@bbs_cache[:all][forum_id]
-        end
-      end
+    forum = @@bbs.jump(forum_id)
+    forum.first_unread = cached[:first_unread]
+    cached[:server_first_unread] = cached[:first_unread]
+    
+    if cached[:first_unread] > cached[:noteids].last
+      @@bbs_cache[:todo].delete(forum_id)
+    end
+    
+    if cached[:first_unread] <= cached[:noteids].last
+      @@bbs_cache[:todo][forum_id] = @@bbs_cache[:all][forum_id]
     end
   end
 
   def quit_from_forum(id)
     info "quit_from_forum"
-    record_last_read(id)
-    exit()
+    page_box do
+      "Quitting..."
+    end
+    recording_last_read(id) do
+      exit()
+    end
   end
 
   def quit
@@ -151,19 +204,24 @@ eof
   end
 
   def do_login(username, password)
-    begin
-      @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
-                                      :host => HOST,
-                                      :port => PORT
-                                      )
-      YAML::Store.new('bbsconfig.yaml').transaction do |store|
-        store['username'], store['password'] = username, password
+    page_box do
+      para "logging in..."
+    end
+    Thread.new do
+      begin
+        @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
+                                        :host => HOST,
+                                        :port => PORT
+                                        )
+        YAML::Store.new('bbsconfig.yaml').transaction do |store|
+          store['username'], store['password'] = username, password
+        end
+        visit '/load_bbs'
+      rescue RuntimeError => err
+        debug "error: #{err.message}"
+        @@bbs = nil
+        visit "/login_error/#{err.message}"
       end
-      visit '/load_bbs'
-    rescue RuntimeError => err
-      debug "error: #{err.message}"
-      @@bbs = nil
-      visit "/login_error/#{err.message}"
     end
   end
 
@@ -178,46 +236,54 @@ eof
         visit "/do_login/#{@username_line.text}/#{@password_line.text}"
       end
     end
-    
-    show_page do
-      show_section do
+    @content = page_box do
+      section_box do
         tagline "Login", :stroke => randcolor(:realdark), :align => right
         para "username:"
         @username_line = app.edit_line "#{ username }"
         para "password:"
         @password_line = app.edit_line "#{ password }", :secret => true
-        
         button "login" do
           visit "/do_login/#{@username_line.text}/#{@password_line.text}"
         end
-        
         para(link( 'license', :click => '/license' ))
       end
     end
   end
 
   def quit
-    show_page do
+    page_box do
       exit()
     end
   end
 
   def leave_forum(id)
     info "leave forum #{id}"
-    show_page
-    record_last_read(id)
-    visit '/bbs'
+    page_box
+    page_box do
+      para "leaving forum #{id}..."
+    end
+    recording_last_read(id) do
+      visit '/bbs'
+    end
   end
+  
 
   def load_bbs
-    show_page
-    @@bbs_cache[:all] = @@bbs.forums('all')
-    @@bbs_cache[:todo] = @@bbs.forums('todo')
-    @@bbs_cache[:joined] = @@bbs.forums('joined')
-    visit '/bbs'
+    info "load_bbs"
+    page_box do
+      para "loading forums..."
+    end
+    Thread.new do
+      @@bbs_cache[:all] = @@bbs.forums('all')
+      @@bbs_cache[:todo] = @@bbs.forums('todo')
+      @@bbs_cache[:joined] = @@bbs.forums('joined')
+      visit '/bbs'
+    end
   end
 
   def bbs
+    info "bbs"
     forums = @@bbs_cache[:all]
     forums_todo = (@@bbs_cache[:todo].keys - [1]).sort
     forums_joined = (@@bbs_cache[:joined].keys - forums_todo - [1]).sort
@@ -234,32 +300,23 @@ eof
 
     linklist, keypressproc = actions( action_list )
     keypress { | key | keypressproc.call(key) }
-    show_page do
-      show_section do
-        para *linklist 
-      end
-      #flow(:margin_left => 20, :margin_top => 20) { para *linklist }
-      #  100 =>  { :topic => "100", :flags => 'nosubject,sparse,cananonymous', 
-      #            :name => "Some Forum", :lastnote => "99999", :admin => "Some Dude" }
-      [ ["Unread", forums_todo, ivory],
-        ["Subscribed", forums_joined, lightgrey],
-        ["Zapped", forums_all, darkslateblue]].each do | group |
-        group_name, ordered_ids, coloring = *group
+    open_shown = false
+    page_box do
+      header_box( linklist, "Forums")
+      [ ["Unread", forums_todo ],
+        ["Subscribed", forums_joined ],
+        ["Zapped", forums_all ]].each do | group |
+        group_name, ordered_ids = *group
         if ordered_ids.length > 0
-          show_section do
-            info "doing #{group_name}"
-            caption( group_name, 
-                     :align => 'right', 
-                     :margin => 20 )
-            flow do
-              ordered_ids.each do | id |
-                data = forums[id]
-                show_chunk do
-                  para link("#{id}> #{data[:name]}", :click => "/enter_forum/#{id}")
-                end
+          chunk_section_box(group_name, open_shown) do
+            ordered_ids.each do | id |
+              data = forums[id]
+              chunk_box do
+                para link("#{id}> #{data[:name]}", :click => "/enter_forum/#{id}")
               end
             end
           end
+          open_shown = true
         end
       end
     end
@@ -268,50 +325,61 @@ eof
   def goto_next_from(forum_id)
     forum_id = forum_id.to_i
     # id is forum to jump *from*
+    page_box do
+      para "leaving forum #{forum_id}.."
+    end
     cache = @@forum_cache[forum_id]
     cache[:first_unread] = cache[:noteids].last + 1
-    record_last_read(forum_id)
+      
     todo_list = @@bbs_cache[:todo].keys.sort
-    if todo_list.length > 0
-      visit "/enter_forum/#{@@bbs_cache[:todo].keys.first}"
-    else
-      visit "/bbs"
+    recording_last_read(forum_id) do
+      if todo_list.length > 0
+        visit "/enter_forum/#{@@bbs_cache[:todo].keys.first}"
+      else
+        visit "/bbs"
+      end
     end
   end
   
   def switch_forum(old_id, new_id)
     old_id, new_id = old_id.to_i, new_id.to_i
-    record_last_read(old_id)
-    visit "/enter_forum/#{new_id}"
+    recording_last_read(old_id) do
+      visit "/enter_forum/#{new_id}"
+    end
   end
 
   def enter_forum(id)
+    page_box do
+      para "loading forum #{id}..."
+    end
     info "enter_forum #{id}"
     id = id.to_i
-    # we pull stuff into forum_cache only when we enter a new forum.
-    forum = @@bbs.jump(id)
-    cache  = {}
-    first_unread = forum.first_unread.to_i
-    info "first_unread: #{ first_unread.inspect }"
-    cache[:server_first_unread] = first_unread
-    cache[:first_unread] = first_unread
-    info "first unread: #{first_unread.inspect}"
-    info "forum_id info: #{ @@bbs_cache[:all][id].inspect }"
-    noterange = "#{ first_unread - HORIZON }-#{ first_unread + HORIZON }"
-    cache[:noteids] = forum.noteids(noterange).sort
-    if cache[:noteids].length == 0 # uh oh
-      noterange = "#{ @@bbs_cache[:all][id][:lastnote].to_i - HORIZON }-#{ @@bbs_cache[:all][id][:lastnote] }"
+    Thread.new do
+      # we pull stuff into forum_cache only when we enter a new forum.
+      forum = @@bbs.jump(id)
+      cache  = {}
+      first_unread = forum.first_unread.to_i
+      info "first_unread: #{ first_unread.inspect }"
+      cache[:server_first_unread] = first_unread
+      cache[:first_unread] = first_unread
+      info "first unread: #{first_unread.inspect}"
+      info "forum_id info: #{ @@bbs_cache[:all][id].inspect }"
+      noterange = "#{ first_unread - HORIZON }-#{ first_unread + HORIZON }"
       cache[:noteids] = forum.noteids(noterange).sort
+      if cache[:noteids].length == 0 # uh oh
+        noterange = "#{ @@bbs_cache[:all][id][:lastnote].to_i - HORIZON }-#{ @@bbs_cache[:all][id][:lastnote] }"
+        cache[:noteids] = forum.noteids(noterange).sort
+      end
+      info "noterange: #{noterange}"
+      cache[:post_headers] = forum.post_headers(noterange)
+      cache[:name] = forum.name
+      cache[:post_ok] = forum.post?
+      cache[:admin] = forum.admin
+      cache[:anonymous] = forum.anonymous
+      cache[:private] = forum.private
+      @@forum_cache[id] = cache
+      visit "/forum/#{id}"
     end
-    info "noterange: #{noterange}"
-    cache[:post_headers] = forum.post_headers(noterange)
-    cache[:name] = forum.name
-    cache[:post_ok] = forum.post?
-    cache[:admin] = forum.admin
-    cache[:anonymous] = forum.anonymous
-    cache[:private] = forum.private
-    @@forum_cache[id] = cache
-    visit "/forum/#{id}"
   end
 
   def forum(id)
@@ -327,43 +395,39 @@ eof
     noteids = cache[:noteids]
     msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
     msgs_read = noteids.select { |msg| msg.to_i < first_unread }
+    actionlist =  [[ 'e', '[e]nter msg', "/new_post/#{id}"],
+                   [ 'i', '[i]nfo', "/foruminfo/#{id}"],
+                   [ 'l', 'forum [l]ist', "/leave_forum/#{id}"],
+                   [ 'f', 'read [f]orward',
+                     "/message/#{id}/#{noteids.first}/forward"],
+                   [ 'b', 'read [b]ackward', 
+                     "/message/#{id}/#{noteids.last}/backward"],
+                   [ 'g', '[g]oto next forum with unread messages', 
+                     "/goto_next_from/#{id}"],
+                   [ ' ', '[ ]first unread', "/first_unread/#{id}"],
+                   [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
+                  ]
     
-    linklist, keypressproc = actions( [[ 'e', '[e]nter msg', "/new_post/#{id}"],
-                                       [ 'i', '[i]nfo', "/foruminfo/#{id}"],
-                                       [ 'l', 'forum [l]ist', "/leave_forum/#{id}"],
-                                       [ 'f', 'read [f]orward',
-                                         "/message/#{id}/#{noteids.first}/forward"],
-                                       [ 'b', 'read [b]ackward', 
-                                         "/message/#{id}/#{noteids.last}/backward"],
-                                       [ 'g', '[g]oto next forum with unread messages', 
-                                         "/goto_next_from/#{id}"],
-                                       [ ' ', '[ ]first unread', "/first_unread/#{id}"],
-                                       [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
-                                      ] )
+    linklist, keypressproc = actions(actionlist)
     
     keypress { | key |  keypressproc.call(key) }
-    show_page do
-      show_section do 
-        para *linklist
-        tagline( cache[:name], :stroke => randcolor(:realdark), 
-                 :margin => 20, :align => 'right')
-      end
+    open_shown = false
+    page_box do
+      header_box(linklist, cache[:name])
       [ [ "Unread", msgs_unread,  ],
         [ "Read", msgs_read,  ]].each do | pair |
         group_name, ordered_ids = *pair
         if ordered_ids.length > 0
-        show_section do
-            caption group_name, :align => 'right', :stroke => randcolor(:realdark)
-            flow do
-              ordered_ids.reverse.each do | post_id |
-                post = posts[post_id.to_s]
-                show_chunk do
-                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
-                  para post[:subject]
-                end
+          chunk_section_box(group_name, open_shown) do
+            ordered_ids.reverse.each do | post_id |
+              post = posts[post_id.to_s]
+              chunk_box do
+                para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
+                para post[:subject]
               end
             end
           end
+          open_shown = true
         end
       end
     end
@@ -372,25 +436,33 @@ eof
   def foruminfo(id)
     id = id.to_i
     info "foruminfo #{id}"
+    @page = page_box do
+      para "loading info for forum #{id}..."
+    end
+
     linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
                                       [ 'p', '[e]nter msg', "/new_post/#{id}"],
                                       [ " ", "[ ]first unread message", "/first_unread/#{id}" ],
                                       [ "q", "[q]uit", "/quit_from_forum/#{id}" ]
                                      ]
     keypress { | key |  keypressproc.call(key) }
-    
-    show_page do
-      para *linklist
+
+    Thread.new do
       @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
       info = @@forum_cache[:forum_info]
       the_body = info[:body]
       body_urls = the_body.scan(URLRE)
-      show_section do
-        caption "Forum moderator is #{@@forum_cache[id][:admin]}."
-        caption "Forum info last updated #{info[:date]} by #{info[:from]}"
-        para "#{info[:body]}"
-        body_urls.each do | a_url |
-          para link(a_url, :click => a_url)
+      @page.clear do
+        section_box do
+          para *linklist
+        end
+        section_box do
+          caption "Forum moderator is #{@@forum_cache[id][:admin]}."
+          caption "Forum info last updated #{info[:date]} by #{info[:from]}"
+          para "#{info[:body]}"
+          body_urls.each do | a_url |
+            para link(a_url, :click => a_url)
+          end
         end
       end
     end
@@ -401,7 +473,7 @@ eof
     forum_id = forum_id.to_i
     cache = @@forum_cache[forum_id]
 
-    show_page do
+    page_box do
       para "finding first unread message in forum #{forum_id}..."
     end
 
@@ -416,7 +488,6 @@ eof
   end
 
   def mark_unread(forum_id,msgnum)
-    show_page
     forum_id = forum_id.to_i; msgnum = msgnum.to_i
     cache = @@forum_cache[forum_id]
     if msgnum < cache[:first_unread]
@@ -459,6 +530,10 @@ eof
   def message(forum_id,msgnum, direction)
     forum_id=forum_id.to_i
     msgnum=msgnum.to_i
+
+    @page = page_box do
+      para "loading messge #{msgnum} in forum #{forum_id}"
+    end
 
     post_ids = @@forum_cache[forum_id][:noteids]
     post_index = post_ids.index(msgnum)
@@ -509,63 +584,81 @@ eof
     keypress { | key |  
       keypressproc.call(key) 
     }
-    show_page do
-      show_section do
-        para *linklist
-      end
 
-    msg = get_message(forum_id, msgnum)
-    body_urls = msg[:body].scan(URLRE)
-    authority = " (#{msg[:authority]})" if msg[:authority]
-    @whole_message = ( "#{msg[:date]} from #{msg[:author]}#{authority}\n" + 
-                       "#{msg[:body]}" + 
-                       "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
-
-      show_section do
+    Thread.new do
+      msg = get_message(forum_id, msgnum)
+      body_urls = msg[:body].scan(URLRE)
+      authority = " (#{msg[:authority]})" if msg[:authority]
+      @whole_message = ( "#{msg[:date]} from #{msg[:author]}#{authority}\n" + 
+                         "#{msg[:body]}" + 
+                         "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
+      
+      @page.clear do
+        section_box do
+          para *linklist
+        end
+        section_box do
         para @whole_message
-        body_urls.each do | a_url |
-          para link(a_url, :click => a_url)
+          body_urls.each do | a_url |
+            para link(a_url, :click => a_url)
+          end
         end
       end
     end
-
     if @@forum_cache[forum_id][:first_unread] <= msgnum
       @@forum_cache[forum_id][:first_unread] = msgnum + 1
     end
+
   end
     
   def new_reply(forum_id, msgnum)
-    @post = @@bbs.jump(forum_id).read(msgnum)
-    old_body = @post.body.split("\n").map{ |line| "> #{line}" }.join("\n")
-    quote = "#{@post.author} wrote:\n#{old_body}\n\n"
-    show_page do
-      tagline "New Post", :stroke => randcolor(:realdark), :align => 'right'
-      para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
-      @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
-      button "post" do
-        text = @post_box.text
-        new_post = @@bbs.jump(forum_id).post(text)
-        record_last_read(forum_id)
-        visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+    @page = page_box do
+      "loading message #{msgnum} in forum #{forum_id} to reply to..."
+    end
+
+    Thread.new do
+      msg = get_message(forum_id, msgnum)
+      old_body = msg[:body].split("\n").map{ |line| "> #{line}" }.join("\n")
+      quote = "#{msg[:author]} wrote:\n#{old_body}\n\n"
+      @page.clear do
+        section_box do
+          para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
+          tagline "Post to forum #{forum_id}", :stroke => randcolor(:realdark), :align => 'right'
+          @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
+          button "post" do
+            text = @post_box.text
+            new_post = @@bbs.jump(forum_id).post(text)
+            recording_last_read(forum_id) do
+              visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+            end
+          end
+        end
       end
     end
   end
   
   def new_post(forum_id)
-    show_page do
-      tagline "New Post", :stroke => randcolor(:realdark), :align => right
-      para link("back", :click => "/forum/#{forum_id}")
-      @post_box = edit_box :width => 500, :height => 300, :margin => 20
-      button "post" do
-        text = @post_box.text
-        new_post = @@bbs.jump(forum_id).post(text)
-        record_last_read(forum_id)
-        visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+    @page = page_box do
+      section_box do
+        tagline "New Post", :stroke => randcolor(:realdark), :align => right
+        para link("back", :click => "/forum/#{forum_id}")
+        @post_box = edit_box :width => 500, :height => 300, :margin => 20
+        button "post" do
+          text = @post_box.text
+          @page.clear do
+            para "posting message..."
+          end
+          Thread.new do
+            new_post = @@bbs.jump(forum_id).post(text)
+            recording_last_read(forum_id) do
+              visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+            end
+          end
+        end
       end
     end
   end
 end
 
 
-
-Shoes.app :width => 800
+Shoes.app :width => 850
