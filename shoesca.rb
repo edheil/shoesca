@@ -30,7 +30,6 @@ eof
   HORIZON = 200 # the range of noteids retrieved before or after the first_unread
  
   url '/', :login
-  url '/login_error/(.+)', :login_error
   url '/bbs', :bbs
   url '/do_login/([^\/]+)/(.+)', :do_login
   url '/load_bbs', :load_bbs
@@ -38,6 +37,7 @@ eof
   url '/quit', :quit
   url '/goto_next_from/(\d+)', :goto_next_from
   url '/login', :login
+  url '/error', :error
   url '/license', :license
   url '/enter_forum/(\d+)', :enter_forum
   url '/forum/(\d+)', :forum
@@ -49,6 +49,7 @@ eof
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs = nil
+  @@error = nil
   @@forum_cache = {}
   @@bbs_cache = {}
   @@use_threads = true
@@ -59,6 +60,18 @@ eof
     else
       yield
     end
+  end
+
+  def rescuingly
+    debug "begin rescue block..."
+    begin
+      yield
+    rescue Exception => err
+      debug "rescuing #{err.message}"
+      @@error = err
+      visit '/error'
+    end
+    debug "end rescue block..."
   end
 
   def page_box
@@ -158,8 +171,10 @@ eof
         end
       end
       threadingly do
-        record_last_read(forum_id)
-        yield
+        rescuingly do
+          record_last_read(forum_id)
+          yield
+        end
       end
     else
       yield
@@ -211,30 +226,35 @@ eof
       para "logging in..."
     end
     threadingly do
-      begin
+      rescuingly do
         @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
                                         :host => HOST,
                                         :port => PORT
                                         )
         YAML::Store.new('bbsconfig.yaml').transaction do |store|
           store['username'], store['password'] = username, password
+          visit '/load_bbs'
         end
-        visit '/load_bbs'
-      rescue StandardError => err
-        @@bbs = nil
-        add_actions( ['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit'])
-        @page.clear do
-          header_box("Error")
-          section_box do
-            para "error logging in: #{err.message}"
-          end
-        end
+      end
+    end
+  end
+
+  def error
+    setup_keypress
+    add_actions( ['q', '[q]uit', '/quit'],
+                 ['b', '[b]ack to login', '/']
+                 )
+    page_box do
+      header_box "Error"
+      section_box do
+        para @@error
       end
     end
   end
 
   def login
     setup_keypress
+    @@bbs = nil
     username, password = nil, nil
     YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
       username, password = store['username'], store['password']
@@ -283,10 +303,12 @@ eof
       para "loading forums..."
     end
     threadingly do
-      @@bbs_cache[:all] = @@bbs.forums('all')
-      @@bbs_cache[:todo] = @@bbs.forums('todo')
-      @@bbs_cache[:joined] = @@bbs.forums('joined')
-      visit '/bbs'
+      rescuingly do
+        @@bbs_cache[:all] = @@bbs.forums('all')
+        @@bbs_cache[:todo] = @@bbs.forums('todo')
+        @@bbs_cache[:joined] = @@bbs.forums('joined')
+        visit '/bbs'
+      end
     end
   end
 
@@ -361,30 +383,32 @@ eof
     info "enter_forum #{id}"
     id = id.to_i
     threadingly do
-      # we pull stuff into forum_cache only when we enter a new forum.
-      forum = @@bbs.jump(id)
-      cache  = {}
-      first_unread = forum.first_unread.to_i
-      info "first_unread: #{ first_unread.inspect }"
-      cache[:server_first_unread] = first_unread
-      cache[:first_unread] = first_unread
-      info "first unread: #{first_unread.inspect}"
-      info "forum_id info: #{ @@bbs_cache[:all][id].inspect }"
-      noterange = "#{ first_unread - HORIZON }-#{ first_unread + HORIZON }"
-      cache[:noteids] = forum.noteids(noterange).sort
-      if cache[:noteids].length == 0 # uh oh
-        noterange = "#{ @@bbs_cache[:all][id][:lastnote].to_i - HORIZON }-#{ @@bbs_cache[:all][id][:lastnote] }"
+      rescuingly do
+        # we pull stuff into forum_cache only when we enter a new forum.
+        forum = @@bbs.jump(id)
+        cache  = {}
+        first_unread = forum.first_unread.to_i
+        info "first_unread: #{ first_unread.inspect }"
+        cache[:server_first_unread] = first_unread
+        cache[:first_unread] = first_unread
+        info "first unread: #{first_unread.inspect}"
+        info "forum_id info: #{ @@bbs_cache[:all][id].inspect }"
+        noterange = "#{ first_unread - HORIZON }-#{ first_unread + HORIZON }"
         cache[:noteids] = forum.noteids(noterange).sort
+        if cache[:noteids].length == 0 # uh oh
+          noterange = "#{ @@bbs_cache[:all][id][:lastnote].to_i - HORIZON }-#{ @@bbs_cache[:all][id][:lastnote] }"
+          cache[:noteids] = forum.noteids(noterange).sort
+        end
+        info "noterange: #{noterange}"
+        cache[:post_headers] = forum.post_headers(noterange)
+        cache[:name] = forum.name
+        cache[:post_ok] = forum.post?
+        cache[:admin] = forum.admin
+        cache[:anonymous] = forum.anonymous
+        cache[:private] = forum.private
+        @@forum_cache[id] = cache
+        visit "/forum/#{id}"
       end
-      info "noterange: #{noterange}"
-      cache[:post_headers] = forum.post_headers(noterange)
-      cache[:name] = forum.name
-      cache[:post_ok] = forum.post?
-      cache[:admin] = forum.admin
-      cache[:anonymous] = forum.anonymous
-      cache[:private] = forum.private
-      @@forum_cache[id] = cache
-      visit "/forum/#{id}"
     end
   end
 
@@ -454,18 +478,20 @@ eof
                  [ "q", "[q]uit", "/quit_from_forum/#{id}" ] )
 
     threadingly do
-      @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
-      info = @@forum_cache[:forum_info]
-      the_body = info[:body]
-      body_urls = the_body.scan(URLRE)
-      @page.clear do
-        header_box
-        section_box do
-          caption "Forum moderator is #{@@forum_cache[id][:admin]}."
-          caption "Forum info last updated #{info[:date]} by #{info[:from]}"
-          para "#{info[:body]}"
-          body_urls.each do | a_url |
-            para link(a_url, :click => a_url)
+      rescuingly do
+        @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
+        info = @@forum_cache[:forum_info]
+        the_body = info[:body]
+        body_urls = the_body.scan(URLRE)
+        @page.clear do
+          header_box
+          section_box do
+            caption "Forum moderator is #{@@forum_cache[id][:admin]}."
+            caption "Forum info last updated #{info[:date]} by #{info[:from]}"
+            para "#{info[:body]}"
+            body_urls.each do | a_url |
+              para link(a_url, :click => a_url)
+            end
           end
         end
       end
@@ -576,20 +602,26 @@ eof
     end
     add_actions [ "q", "[q]uit", "/quit_from_forum/#{forum_id}" ]
 
+
+    # this is one of the few times we don't have a separate
+    # page for doing network stuff.
+
     threadingly do
-      msg = get_message(forum_id, msgnum)
-      body_urls = msg[:body].scan(URLRE)
-      authority = " (#{msg[:authority]})" if msg[:authority]
-      @whole_message = ( "#{msg[:date]} from #{msg[:author]}#{authority}\n" + 
-                         "#{msg[:body]}" + 
-                         "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
-      
-      @page.clear do
-        header_box
-        section_box do
-        para @whole_message
-          body_urls.each do | a_url |
-            para link(a_url, :click => a_url)
+      rescuingly do
+        msg = get_message(forum_id, msgnum)
+        body_urls = msg[:body].scan(URLRE)
+        authority = " (#{msg[:authority]})" if msg[:authority]
+        @whole_message = ( "#{msg[:date]} from #{msg[:author]}#{authority}\n" + 
+                           "#{msg[:body]}" + 
+                           "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
+        
+        @page.clear do
+          header_box
+          section_box do
+            para @whole_message
+            body_urls.each do | a_url |
+              para link(a_url, :click => a_url)
+            end
           end
         end
       end
@@ -606,19 +638,21 @@ eof
     end
 
     threadingly do
-      msg = get_message(forum_id, msgnum)
-      old_body = msg[:body].split("\n").map{ |line| "> #{line}" }.join("\n")
-      quote = "#{msg[:author]} wrote:\n#{old_body}\n\n"
-      @page.clear do
-        section_box do
-          para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
-          tagline "Post to forum #{forum_id}", :stroke => randcolor(:realdark), :align => 'right'
-          @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
-          button "post" do
-            text = @post_box.text
-            new_post = @@bbs.jump(forum_id).post(text)
-            recording_last_read(forum_id) do
-              visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+      rescuingly do
+        msg = get_message(forum_id, msgnum)
+        old_body = msg[:body].split("\n").map{ |line| "> #{line}" }.join("\n")
+        quote = "#{msg[:author]} wrote:\n#{old_body}\n\n"
+        @page.clear do
+          section_box do
+            para link("back", :click => "/message/#{forum_id}/#{msgnum}/forward")
+            tagline "Post to forum #{forum_id}", :stroke => randcolor(:realdark), :align => 'right'
+            @post_box = edit_box quote, :width => 500, :height => 300, :margin => 20
+            button "post" do
+              text = @post_box.text
+              new_post = @@bbs.jump(forum_id).post(text)
+              recording_last_read(forum_id) do
+                visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+              end
             end
           end
         end
@@ -638,9 +672,11 @@ eof
             para "posting message..."
           end
           threadingly do
-            new_post = @@bbs.jump(forum_id).post(text)
-            recording_last_read(forum_id) do
-              visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+            rescuingly do
+              new_post = @@bbs.jump(forum_id).post(text)
+              recording_last_read(forum_id) do
+                visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
+              end
             end
           end
         end
