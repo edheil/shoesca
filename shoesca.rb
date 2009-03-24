@@ -79,7 +79,6 @@ eof
     stack :margin => 20 do
       background randcolor(:light, 0.5), :curve => 20
       st = stack :margin => 20 do
-        info "yielding..."
         yield if block_given?
       end
     end
@@ -101,11 +100,12 @@ eof
     end
   end
 
-  def header_box(linklist=[], text = "")
+  def header_box(text = "")
+    linklist ||= @action_links
     section_box do
       flow do
         flow( :width => -200) do
-          para *linklist 
+          para *action_links
         end
         flow( :width => 200) do
           tagline( text, :stroke => randcolor(:realdark), 
@@ -205,7 +205,7 @@ eof
   end
 
   def do_login(username, password)
-    debug "do_login"
+    setup_keypress
     @page = page_box do
       para "logging in..."
     end
@@ -220,12 +220,10 @@ eof
         end
         visit '/load_bbs'
       rescue StandardError => err
-        debug "error: #{err.message}"
         @@bbs = nil
-        linklist, keypressproc = actions([['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit']])
-        keypress { | key | keypressproc.call(key) }
+        add_actions( ['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit'])
         @page.clear do
-          header_box(linklist, "Error")
+          header_box("Error")
           section_box do
             para "error logging in: #{err.message}"
           end
@@ -235,21 +233,20 @@ eof
   end
 
   def login
+    setup_keypress
     username, password = nil, nil
     YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
       username, password = store['username'], store['password']
     end
-    
-    actionlist = [["\n", '[enter] login', Proc.new {
+
+    add_actions( ["\n", '[enter] login', Proc.new {
                      visit "/do_login/#{@username_line.text}/#{@password_line.text}"}
                   ],
-                  ['l', '[l]icense', '/license'],
-                   ['q', '[q]uit', '/quit']]
-    linklist, keypressproc = actions(actionlist)
-    keypress { | key | keypressproc.call(key) }
+                 ['l', '[l]icense', '/license'],
+                 ['q', '[q]uit', '/quit'] )
     
     @content = page_box do
-      header_box(linklist, "Login")
+      header_box( "Login")
       section_box do
         flow { para "username:"; @username_line = app.edit_line "#{ username }" }
         flow { para "password:"; @password_line = app.edit_line "#{ password }", 
@@ -293,6 +290,7 @@ eof
   end
 
   def bbs
+    setup_keypress
     info "bbs"
     forums = @@bbs_cache[:all]
     forums_todo = (@@bbs_cache[:todo].keys - [1]).sort
@@ -300,19 +298,16 @@ eof
     forums_all = (@@bbs_cache[:all].keys - forums_joined - forums_todo - [1]).sort
     # delete mail
     forums.delete(1)
-    action_list = []
     if forums_todo.length > 0
-      action_list << [ ' ', '[ ]first forum with unread', "/enter_forum/#{forums_todo.first}"]
+      add_actions [ ' ', '[ ]first forum with unread', "/enter_forum/#{forums_todo.first}"]
     else
-      action_list << [ ' ', '[ ]refresh_forums', "/load_bbs"]
+      add_actions [ ' ', '[ ]refresh_forums', "/load_bbs"]
     end
-    action_list << [ 'q', '[q]uit', '/quit' ]
+    add_actions [ 'q', '[q]uit', '/quit' ]
 
-    linklist, keypressproc = actions( action_keypress )
-    list { | key | keypressproc.call(key) }
     open_shown = false
     page_box do
-      header_box( linklist, "Forums")
+      header_box( "Forums")
       [ ["Unread", forums_todo ],
         ["Subscribed", forums_joined ],
         ["Zapped", forums_all ]].each do | group |
@@ -393,6 +388,7 @@ eof
   end
 
   def forum(id)
+    setup_keypress
     info "forum #{id}"
     id = id.to_i
     cache = @@forum_cache[id]
@@ -404,28 +400,25 @@ eof
     noteids = cache[:noteids]
     msgs_unread = noteids.select { |msg| msg.to_i >= first_unread }
     msgs_read = noteids.select { |msg| msg.to_i < first_unread }
-    actionlist =  [[ 'e', '[e]nter msg', "/new_post/#{id}"],
-                   [ 'i', '[i]nfo', "/foruminfo/#{id}"],
-                   [ 'l', 'forum [l]ist', "/leave_forum/#{id}"],
-                   [ 'f', 'read [f]orward',
-                     "/message/#{id}/#{noteids.first}/forward"],
-                   [ 'b', 'read [b]ackward', 
-                     "/message/#{id}/#{noteids.last}/backward"],
-                   [ 'g', '[g]oto next forum with unread messages', 
-                     "/goto_next_from/#{id}"]]
+    add_actions( [ 'e', '[e]nter msg', "/new_post/#{id}"],
+                 [ 'i', '[i]nfo', "/foruminfo/#{id}"],
+                 [ 'l', 'forum [l]ist', "/leave_forum/#{id}"],
+                 [ 'f', 'read [f]orward',
+                   "/message/#{id}/#{noteids.first}/forward"],
+                 [ 'b', 'read [b]ackward', 
+                   "/message/#{id}/#{noteids.last}/backward"],
+                 [ 'g', '[g]oto next forum with unread messages', 
+                   "/goto_next_from/#{id}"])
     if msgs_unread.length > 0
-      actionlist << [ ' ', '[ ]first unread', "/message/#{id}/#{msgs_unread[0]}/forward"]
+      add_actions [ ' ', '[ ]first unread', "/message/#{id}/#{msgs_unread[0]}/forward"]
     else
-      actionlist << [ ' ', '[ ]forum list', "/leave_forum/#{id}"]
+      add_actions [ ' ', '[ ]forum list', "/leave_forum/#{id}"]
     end
-    actionlist << [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
+    add_actions [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
     
-    linklist, keypressproc = actions(actionlist)
-    
-    keypress { | key |  keypressproc.call(key) }
     open_shown = false
     page_box do
-      header_box(linklist, cache[:name])
+      header_box(cache[:name])
       [ [ "Unread", msgs_unread,  ],
         [ "Read", msgs_read,  ]].each do | pair |
         group_name, ordered_ids = *pair
@@ -448,17 +441,16 @@ eof
   end
 
   def foruminfo(id)
+    setup_keypress
     id = id.to_i
     info "foruminfo #{id}"
     @page = page_box do
       para "loading info for forum #{id}..."
     end
 
-    linklist, keypressproc = actions [[ 'b', '[b]ack', "/forum/#{id}"],
-                                      [ 'p', '[e]nter msg', "/new_post/#{id}"],
-                                      [ "q", "[q]uit", "/quit_from_forum/#{id}" ]
-                                     ]
-    keypress { | key |  keypressproc.call(key) }
+    add_actions( [ 'b', '[b]ack', "/forum/#{id}"],
+                 [ 'p', '[e]nter msg', "/new_post/#{id}"],
+                 [ "q", "[q]uit", "/quit_from_forum/#{id}" ] )
 
     threadingly do
       @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
@@ -466,9 +458,7 @@ eof
       the_body = info[:body]
       body_urls = the_body.scan(URLRE)
       @page.clear do
-        section_box do
-          para *linklist
-        end
+        header_box
         section_box do
           caption "Forum moderator is #{@@forum_cache[id][:admin]}."
           caption "Forum info last updated #{info[:date]} by #{info[:from]}"
@@ -490,15 +480,25 @@ eof
     visit "/forum/#{forum_id}"
   end
 
-  def actions(list)
+  def add_actions( *actions)
+    @page_actions ||= []
+    @page_actions = @page_actions + actions
+  end
+  
+  def action_links
+    @page_actions ||= []
     linklist = []
-    list.each do | item |
+    @page_actions.each do | item |
       linklist << link(item[1], :click => item[2] )
-      linklist << " " unless item == list.last
+      linklist << " " unless item == @page_actions.last
     end
+    linklist
+  end
 
-    keypressproc = Proc.new do | key |
-      found = list.assoc(key)
+  def setup_keypress
+    @page_actions ||= []
+    keypress do | key |
+      found = @page_actions.assoc(key)
       if found
         action = found[2]
         if action.respond_to? :call
@@ -509,8 +509,8 @@ eof
         end
       end
     end
-    return linklist, keypressproc
   end
+
 
   def get_message(forum_id, msgnum)
     msg = {}
@@ -522,6 +522,7 @@ eof
   end
 
   def message(forum_id,msgnum, direction)
+    setup_keypress
     forum_id=forum_id.to_i
     msgnum=msgnum.to_i
 
@@ -537,47 +538,42 @@ eof
     
     action_list = []
     if msg_prev
-      action_list << [ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}/backward"]
+      add_actions [ "p", "[p]revious", "/message/#{forum_id}/#{msg_prev}/backward"]
     end
     if msg_next
-      action_list << [ "n", "[n]ext","/message/#{forum_id}/#{msg_next}/forward" ]
+      add_actions [ "n", "[n]ext","/message/#{forum_id}/#{msg_next}/forward" ]
     end
-    action_list << [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ]
-    action_list << [ "e" , "[e]nter message",  "/new_post/#{forum_id}" ]
-    action_list << [ "s" , "[s]top reading", "/forum/#{forum_id}" ]
-    action_list << [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ]
-    action_list << [ "c", "[c]opy to clipboard",  
+    add_actions [ "r" , "[r]eply",  "/new_reply/#{forum_id}/#{msgnum}" ]
+    add_actions [ "e" , "[e]nter message",  "/new_post/#{forum_id}" ]
+    add_actions [ "s" , "[s]top reading", "/forum/#{forum_id}" ]
+    add_actions [ "u", "mark [u]nread", "/mark_unread/#{forum_id}/#{msgnum}" ]
+    add_actions [ "c", "[c]opy to clipboard",  
                      Proc.new { self.clipboard=@whole_message; 
                        alert( "Copied to clipboard.") } ]
     if direction == 'forward'
       if msg_next
-        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
+        add_actions [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_next}/forward" ]
       else
-        action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+        add_actions [ " ", "[ ]continue", "/forum/#{forum_id}" ]
       end
       if msg_prev 
-        action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_prev}/backward" ]
+        add_actions [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_prev}/backward" ]
       else
-        action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
+        add_actions [ " ", "[b]ack up", "/forum/#{forum_id}" ]
       end
     elsif direction == 'backward'
       if msg_prev
-        action_list << [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
+        add_actions [ " ", "[ ]continue", "/message/#{forum_id}/#{msg_prev}/backward" ]
       else
-        action_list << [ " ", "[ ]continue", "/forum/#{forum_id}" ]
+        add_actions [ " ", "[ ]continue", "/forum/#{forum_id}" ]
       end
       if msg_next
-        action_list << [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_next}/forward" ]
+        add_actions [ "b", "[b]ack up", "/message/#{forum_id}/#{msg_next}/forward" ]
       else
-        action_list << [ " ", "[b]ack up", "/forum/#{forum_id}" ]
+        add_actions [ " ", "[b]ack up", "/forum/#{forum_id}" ]
       end
     end
-    action_list << [ "q", "[q]uit", "/quit_from_forum/#{forum_id}" ]
-
-    linklist, keypressproc = actions(action_list)
-    keypress { | key |  
-      keypressproc.call(key) 
-    }
+    add_actions [ "q", "[q]uit", "/quit_from_forum/#{forum_id}" ]
 
     threadingly do
       msg = get_message(forum_id, msgnum)
@@ -588,9 +584,7 @@ eof
                          "[#{@@forum_cache[forum_id][:name]}> msg #{msgnum} (#{ remaining } remaining)]")
       
       @page.clear do
-        section_box do
-          para *linklist
-        end
+        header_box
         section_box do
         para @whole_message
           body_urls.each do | a_url |
