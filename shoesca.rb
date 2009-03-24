@@ -51,6 +51,15 @@ eof
   @@bbs = nil
   @@forum_cache = {}
   @@bbs_cache = {}
+  @@use_threads = true
+
+  def threadingly
+    if @@use_threads
+      Thread.new { yield }
+    else
+      yield
+    end
+  end
 
   def page_box
     st = nil
@@ -147,7 +156,7 @@ eof
           para "recording last read message..."
         end
       end
-      Thread.new do
+      threadingly do
         record_last_read(forum_id)
         yield
       end
@@ -195,18 +204,12 @@ eof
     exit()
   end
 
-  def login_error(error)
-    stack do
-      para err.message
-      link("try again",:click => '/')
-    end
-  end
-
   def do_login(username, password)
-    page_box do
+    debug "do_login"
+    @page = page_box do
       para "logging in..."
     end
-    Thread.new do
+    threadingly do
       begin
         @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
                                         :host => HOST,
@@ -216,10 +219,17 @@ eof
           store['username'], store['password'] = username, password
         end
         visit '/load_bbs'
-      rescue RuntimeError => err
+      rescue StandardError => err
         debug "error: #{err.message}"
         @@bbs = nil
-        visit "/login_error/#{err.message}"
+        linklist, keypressproc = actions([['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit']])
+        keypress { | key | keypressproc.call(key) }
+        @page.clear do
+          header_box(linklist, "Error")
+          section_box do
+            para "error logging in: #{err.message}"
+          end
+        end
       end
     end
   end
@@ -230,22 +240,23 @@ eof
       username, password = store['username'], store['password']
     end
     
-    keypress do | key |
-      if key == "\n"
-        visit "/do_login/#{@username_line.text}/#{@password_line.text}"
-      end
-    end
+    actionlist = [["\n", '[enter] login', Proc.new {
+                     visit "/do_login/#{@username_line.text}/#{@password_line.text}"}
+                  ],
+                  ['l', '[l]icense', '/license'],
+                   ['q', '[q]uit', '/quit']]
+    linklist, keypressproc = actions(actionlist)
+    keypress { | key | keypressproc.call(key) }
+    
     @content = page_box do
+      header_box(linklist, "Login")
       section_box do
-        tagline "Login", :stroke => randcolor(:realdark), :align => right
-        para "username:"
-        @username_line = app.edit_line "#{ username }"
-        para "password:"
-        @password_line = app.edit_line "#{ password }", :secret => true
+        flow { para "username:"; @username_line = app.edit_line "#{ username }" }
+        flow { para "password:"; @password_line = app.edit_line "#{ password }", 
+          :secret => true }
         button "login" do
           visit "/do_login/#{@username_line.text}/#{@password_line.text}"
         end
-        para(link( 'license', :click => '/license' ))
       end
     end
   end
@@ -273,7 +284,7 @@ eof
     page_box do
       para "loading forums..."
     end
-    Thread.new do
+    threadingly do
       @@bbs_cache[:all] = @@bbs.forums('all')
       @@bbs_cache[:todo] = @@bbs.forums('todo')
       @@bbs_cache[:joined] = @@bbs.forums('joined')
@@ -297,8 +308,8 @@ eof
     end
     action_list << [ 'q', '[q]uit', '/quit' ]
 
-    linklist, keypressproc = actions( action_list )
-    keypress { | key | keypressproc.call(key) }
+    linklist, keypressproc = actions( action_keypress )
+    list { | key | keypressproc.call(key) }
     open_shown = false
     page_box do
       header_box( linklist, "Forums")
@@ -353,7 +364,7 @@ eof
     end
     info "enter_forum #{id}"
     id = id.to_i
-    Thread.new do
+    threadingly do
       # we pull stuff into forum_cache only when we enter a new forum.
       forum = @@bbs.jump(id)
       cache  = {}
@@ -449,7 +460,7 @@ eof
                                      ]
     keypress { | key |  keypressproc.call(key) }
 
-    Thread.new do
+    threadingly do
       @@forum_cache[:forum_info] ||= @@bbs.jump(id).forum_information
       info = @@forum_cache[:forum_info]
       the_body = info[:body]
@@ -568,7 +579,7 @@ eof
       keypressproc.call(key) 
     }
 
-    Thread.new do
+    threadingly do
       msg = get_message(forum_id, msgnum)
       body_urls = msg[:body].scan(URLRE)
       authority = " (#{msg[:authority]})" if msg[:authority]
@@ -599,7 +610,7 @@ eof
       "loading message #{msgnum} in forum #{forum_id} to reply to..."
     end
 
-    Thread.new do
+    threadingly do
       msg = get_message(forum_id, msgnum)
       old_body = msg[:body].split("\n").map{ |line| "> #{line}" }.join("\n")
       quote = "#{msg[:author]} wrote:\n#{old_body}\n\n"
@@ -631,7 +642,7 @@ eof
           @page.clear do
             para "posting message..."
           end
-          Thread.new do
+          threadingly do
             new_post = @@bbs.jump(forum_id).post(text)
             recording_last_read(forum_id) do
               visit("/enter_forum/#{forum_id}") # refresh cache cause there's a new post!
