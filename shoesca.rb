@@ -388,7 +388,6 @@ eof
     unless cache
       visit "/enter_forum/#{id}"
     end
-    
     first_unread = cache[:first_unread]
     posts = cache[:post_headers]
     noteids = cache[:noteids]
@@ -423,9 +422,11 @@ eof
           chunk_section_box(group_name, open_shown) do
             ordered_ids.reverse.each do | post_id |
               post = posts[post_id.to_s]
-              chunk_box do
-                para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
-                para post[:subject]
+              if post # bizarrely, sometimes we have a noteid with no post headers
+                chunk_box do
+                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
+                  para post[:subject]
+                end
               end
             end
           end
