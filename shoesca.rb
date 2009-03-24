@@ -139,11 +139,12 @@ eof
 
 
   def license
+    setup_keypress
     info "license"
+    add_actions( ['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit'])
     page_box do
+      header_box("License")
       section_box do
-        background aliceblue, :curve => 20
-        para link('back', :click => '/login')
         para LICENSE
       end
     end
