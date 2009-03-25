@@ -49,6 +49,7 @@ eof
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs = nil
+  @@gradients = true
   @@error = nil
   @@forum_cache = {}
   @@bbs_cache = {}
@@ -78,7 +79,7 @@ eof
     st = nil
     background black
     stack  :margin => 20 do
-      background randcolor(:dark), :curve => 20
+      background(randcolor(:dark), :curve => 20)
       st = stack :margin => 20 do
         yield if block_given?
       end
@@ -86,12 +87,11 @@ eof
     st
   end
 
-
   def section_box
     st = nil
-    stack :margin => 20 do
+    stack :margin => 10 do
       background randcolor(:light, 0.5), :curve => 20
-      st = stack :margin => 20 do
+      st = stack :margin => 10 do
         yield if block_given?
       end
     end
@@ -104,7 +104,7 @@ eof
       flow(:click => Proc.new { the_flow.toggle },
            :margin => 20
            ) do 
-        background rgb(1.0, 1.0, 1.0, 0.5), :curve => 20
+        background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 20
         caption text, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
       end
       the_flow = flow :hidden => hidden do
@@ -130,7 +130,7 @@ eof
 
   def chunk_box
     stack :width => 200 do
-      background rgb(1.0, 1.0, 1.0, 0.5), :curve => 10, :margin => 20
+      background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 10, :margin => 20
       stack :margin => 20 do
         yield if block_given?
       end
@@ -144,10 +144,15 @@ eof
                     when :realdark: [ 0.1, 0.2]
                     else [0.5, 0.6]
                     end
-    rgb( ( (rand - 0.5) * range ) + target,
-         ( (rand - 0.5) * range ) + target,
-         ( (rand - 0.5) * range ) + target,
-         alpha)
+    r, g, b = [ ( (rand - 0.5) * range ) + target,
+                ( (rand - 0.5) * range ) + target,
+                ( (rand - 0.5) * range ) + target ]
+    
+    if @@gradients
+      rgb(r, g, b, alpha)..rgb(r, g, b, alpha * 0.3)
+    else
+      rgb(r, g, b, alpha)
+    end
   end
 
 
@@ -328,15 +333,14 @@ eof
     end
     add_actions [ 'q', '[q]uit', '/quit' ]
 
-    open_shown = false
     page_box do
       header_box( "Forums")
-      [ ["Unread", forums_todo ],
-        ["Subscribed", forums_joined ],
-        ["Zapped", forums_all ]].each do | group |
-        group_name, ordered_ids = *group
+      [ ["Unread", forums_todo, false ],
+        ["Subscribed", forums_joined, true ],
+        ["Zapped", forums_all, true ]].each do | group |
+        group_name, ordered_ids, hidden = *group
         if ordered_ids.length > 0
-          chunk_section_box(group_name, open_shown) do
+          chunk_section_box(group_name, hidden) do
             ordered_ids.each do | id |
               data = forums[id]
               chunk_box do
@@ -344,7 +348,6 @@ eof
               end
             end
           end
-          open_shown = true
         end
       end
     end
@@ -441,14 +444,13 @@ eof
     end
     add_actions [ 'q', '[q]uit', "/quit_from_forum/#{id}" ]
     
-    open_shown = false
     page_box do
       header_box(cache[:name])
-      [ [ "Unread", msgs_unread,  ],
-        [ "Read", msgs_read,  ]].each do | pair |
-        group_name, ordered_ids = *pair
+      [ [ "Unread", msgs_unread, false  ],
+        [ "Read", msgs_read, true  ]].each do | group |
+        group_name, ordered_ids, hidden = *group
         if ordered_ids.length > 0
-          chunk_section_box(group_name, open_shown) do
+          chunk_section_box(group_name, hidden) do
             ordered_ids.reverse.each do | post_id |
               post = posts[post_id.to_s]
               if post # bizarrely, sometimes we have a noteid with no post headers
@@ -459,7 +461,6 @@ eof
               end
             end
           end
-          open_shown = true
         end
       end
     end
