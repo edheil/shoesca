@@ -49,180 +49,39 @@ eof
   url '/new_post/(\d+)', :new_post
   url '/new_reply/(\d+)/(\d+)', :new_reply
   @@bbs = nil
-  @@gradients = true
+  @@gradients = false
   @@error = nil
   @@forum_cache = {}
   @@bbs_cache = {}
   @@use_threads = true
 
-  def threadingly
-    if @@use_threads
-      Thread.new { yield }
-    else
-      yield
-    end
-  end
+  # PAGES
 
-  def rescuingly
-    debug "begin rescue block..."
-    begin
-      yield
-    rescue Exception => err
-      debug "rescuing #{err.message}"
-      @@error = err
-      visit '/error'
-    end
-    debug "end rescue block..."
-  end
-
-  def page_box
-    st = nil
-    background black
-    stack  :margin => 20 do
-      background(randcolor(:dark), :curve => 20)
-      st = stack :margin => 20 do
-        yield if block_given?
-      end
-    end
-    st
-  end
-
-  def section_box
-    st = nil
-    stack :margin => 10 do
-      background randcolor(:light, 0.5), :curve => 20
-      st = stack :margin => 10 do
-        yield if block_given?
-      end
-    end
-    st
-  end
-
-  def chunk_section_box(text, hidden=true)
-    the_flow = nil
-    section_box do
-      flow(:click => Proc.new { the_flow.toggle },
-           :margin => 20
-           ) do 
-        background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 20
-        caption text, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
-      end
-      the_flow = flow :hidden => hidden do
-        yield
-      end
-    end
-  end
-
-  def header_box(text = "")
-    linklist ||= @action_links
-    section_box do
-      flow do
-        flow( :width => -200) do
-          para *action_links
-        end
-        flow( :width => 200) do
-          tagline( text, :stroke => randcolor(:realdark), 
-                   :margin => 20, :align => 'right')
-        end
-      end
-    end
-  end
-
-  def chunk_box
-    stack :width => 200 do
-      background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 10, :margin => 20
-      stack :margin => 20 do
-        yield if block_given?
-      end
-    end
-  end
-
-  def randcolor(bias=nil, alpha = 1.0)
-    target, range = case bias
-                    when :dark: [ 0.3, 0.3 ]
-                    when :light: [0.8, 0.4]
-                    when :realdark: [ 0.1, 0.2]
-                    else [0.5, 0.6]
-                    end
-    r, g, b = [ ( (rand - 0.5) * range ) + target,
-                ( (rand - 0.5) * range ) + target,
-                ( (rand - 0.5) * range ) + target ]
-    
-    if @@gradients
-      rgb(r, g, b, alpha)..rgb(r, g, b, alpha * 0.3)
-    else
-      rgb(r, g, b, alpha)
-    end
-  end
-
-
-  def license
+  def login
     setup_keypress
-    info "license"
-    add_actions( ['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit'])
-    page_box do
-      header_box("License")
+    @@bbs = nil
+    username, password = nil, nil
+    YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
+      username, password = store['username'], store['password']
+    end
+
+    add_actions( ["\n", '[enter] login', Proc.new {
+                     visit "/do_login/#{@username_line.text}/#{@password_line.text}"}
+                  ],
+                 ['l', '[l]icense', '/license'],
+                 ['q', '[q]uit', '/quit'] )
+    
+    @content = page_box do
+      header_box( "Login")
       section_box do
-        para LICENSE
-      end
-    end
-  end
-
-  def recording_last_read(forum_id)
-    if should_record_last_read(forum_id)
-      clear do
-        page_box do
-          para "recording last read message..."
+        flow { para "username:"; @username_line = app.edit_line "#{ username }" }
+        flow { para "password:"; @password_line = app.edit_line "#{ password }", 
+          :secret => true }
+        button "login" do
+          visit "/do_login/#{@username_line.text}/#{@password_line.text}"
         end
       end
-      threadingly do
-        rescuingly do
-          record_last_read(forum_id)
-          yield
-        end
-      end
-    else
-      yield
     end
-  end
-
-  def should_record_last_read(forum_id)
-    forum_id = forum_id.to_i
-    info "should_record_last_read for #{forum_id}"
-    cached = @@forum_cache[forum_id]
-    cached[:first_unread] != cached[:server_first_unread]
-  end
-
-  def record_last_read(forum_id)
-    forum_id = forum_id.to_i
-    info "record_last_read for #{forum_id}"
-    cached = @@forum_cache[forum_id]
-    forum = @@bbs.jump(forum_id)
-    forum.first_unread = cached[:first_unread]
-    cached[:server_first_unread] = cached[:first_unread]
-    
-    if cached[:first_unread] > cached[:noteids].last
-      @@bbs_cache[:todo].delete(forum_id)
-    end
-    
-    if cached[:first_unread] <= cached[:noteids].last
-      @@bbs_cache[:todo][forum_id] = @@bbs_cache[:all][forum_id]
-    end
-  end
-
-  def quit_from_forum(id)
-    info "quit_from_forum"
-    page_box do
-      "Quitting..."
-    end
-    recording_last_read(id) do
-      exit()
-    end
-  end
-
-  def quit
-    info "quit"
-    exit()
   end
 
   def do_login(username, password)
@@ -257,51 +116,18 @@ eof
     end
   end
 
-  def login
+  def license
     setup_keypress
-    @@bbs = nil
-    username, password = nil, nil
-    YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
-      username, password = store['username'], store['password']
-    end
-
-    add_actions( ["\n", '[enter] login', Proc.new {
-                     visit "/do_login/#{@username_line.text}/#{@password_line.text}"}
-                  ],
-                 ['l', '[l]icense', '/license'],
-                 ['q', '[q]uit', '/quit'] )
-    
-    @content = page_box do
-      header_box( "Login")
+    info "license"
+    add_actions( ['b', '[b]ack', '/' ], ['q', '[q]uit', '/quit'])
+    page_box do
+      header_box("License")
       section_box do
-        flow { para "username:"; @username_line = app.edit_line "#{ username }" }
-        flow { para "password:"; @password_line = app.edit_line "#{ password }", 
-          :secret => true }
-        button "login" do
-          visit "/do_login/#{@username_line.text}/#{@password_line.text}"
-        end
+        para LICENSE
       end
     end
   end
-
-  def quit
-    page_box do
-      exit()
-    end
-  end
-
-  def leave_forum(id)
-    info "leave forum #{id}"
-    page_box
-    page_box do
-      para "leaving forum #{id}..."
-    end
-    recording_last_read(id) do
-      visit '/bbs'
-    end
-  end
   
-
   def load_bbs
     info "load_bbs"
     page_box do
@@ -350,32 +176,6 @@ eof
           end
         end
       end
-    end
-  end
-
-  def goto_next_from(forum_id)
-    forum_id = forum_id.to_i
-    # id is forum to jump *from*
-    page_box do
-      para "leaving forum #{forum_id}.."
-    end
-    cache = @@forum_cache[forum_id]
-    cache[:first_unread] = cache[:noteids].last + 1
-      
-    todo_list = @@bbs_cache[:todo].keys.sort
-    recording_last_read(forum_id) do
-      if todo_list.length > 0
-        visit "/enter_forum/#{@@bbs_cache[:todo].keys.first}"
-      else
-        visit "/bbs"
-      end
-    end
-  end
-  
-  def switch_forum(old_id, new_id)
-    old_id, new_id = old_id.to_i, new_id.to_i
-    recording_last_read(old_id) do
-      visit "/enter_forum/#{new_id}"
     end
   end
 
@@ -455,7 +255,7 @@ eof
               post = posts[post_id.to_s]
               if post # bizarrely, sometimes we have a noteid with no post headers
                 chunk_box do
-                  para link("#{ post_id }/#{post[:author]}/#{post[:date]}/#{post[:size]}", :click => "/message/#{id}/#{post_id}/forward")
+                  para link("#{ post_id }\n#{post[:author]}\n#{post[:date]}", :click => "/message/#{id}/#{post_id}/forward")
                   para post[:subject]
                 end
               end
@@ -497,56 +297,6 @@ eof
         end
       end
     end
-  end
-
-  def mark_unread(forum_id,msgnum)
-    forum_id = forum_id.to_i; msgnum = msgnum.to_i
-    cache = @@forum_cache[forum_id]
-    if msgnum < cache[:first_unread]
-      cache[:first_unread] = msgnum
-    end
-    visit "/forum/#{forum_id}"
-  end
-
-  def add_actions( *actions)
-    @page_actions ||= []
-    @page_actions = @page_actions + actions
-  end
-  
-  def action_links
-    @page_actions ||= []
-    linklist = []
-    @page_actions.each do | item |
-      linklist << link(item[1], :click => item[2] )
-      linklist << " " unless item == @page_actions.last
-    end
-    linklist
-  end
-
-  def setup_keypress
-    @page_actions ||= []
-    keypress do | key |
-      found = @page_actions.assoc(key)
-      if found
-        action = found[2]
-        if action.respond_to? :call
-          action.call
-        else
-          info "visiting <#{action}>"
-          visit action
-        end
-      end
-    end
-  end
-
-
-  def get_message(forum_id, msgnum)
-    msg = {}
-    post = @@bbs.jump(forum_id).read(msgnum)
-    [:date, :author, :body, :authority].each { |k| msg[k] = post.send(k) }
-    msg[:message_id] = msgnum
-    msg[:forum_id] = forum_id
-    msg
   end
 
   def message(forum_id,msgnum, direction)
@@ -632,7 +382,68 @@ eof
     end
 
   end
-    
+
+  def quit
+    info "quit"
+    exit()
+  end
+
+  def quit_from_forum(id)
+    info "quit_from_forum"
+    page_box do
+      "Quitting..."
+    end
+    recording_last_read(id) do
+      exit()
+    end
+  end
+
+  def leave_forum(id)
+    info "leave forum #{id}"
+    page_box
+    page_box do
+      para "leaving forum #{id}..."
+    end
+    recording_last_read(id) do
+      visit '/bbs'
+    end
+  end
+
+  def goto_next_from(forum_id)
+    forum_id = forum_id.to_i
+    # id is forum to jump *from*
+    page_box do
+      para "leaving forum #{forum_id}.."
+    end
+    cache = @@forum_cache[forum_id]
+    cache[:first_unread] = cache[:noteids].last + 1
+      
+    todo_list = @@bbs_cache[:todo].keys.sort
+    recording_last_read(forum_id) do
+      if todo_list.length > 0
+        visit "/enter_forum/#{@@bbs_cache[:todo].keys.first}"
+      else
+        visit "/bbs"
+      end
+    end
+  end
+  
+  def switch_forum(old_id, new_id)
+    old_id, new_id = old_id.to_i, new_id.to_i
+    recording_last_read(old_id) do
+      visit "/enter_forum/#{new_id}"
+    end
+  end
+
+  def mark_unread(forum_id,msgnum)
+    forum_id = forum_id.to_i; msgnum = msgnum.to_i
+    cache = @@forum_cache[forum_id]
+    if msgnum < cache[:first_unread]
+      cache[:first_unread] = msgnum
+    end
+    visit "/forum/#{forum_id}"
+  end
+
   def new_reply(forum_id, msgnum)
     @page = page_box do
       "loading message #{msgnum} in forum #{forum_id} to reply to..."
@@ -684,6 +495,198 @@ eof
       end
     end
   end
+
+
+  # UTILITY METHODS
+  
+  def threadingly
+    if @@use_threads
+      Thread.new { yield }
+    else
+      yield
+    end
+  end
+
+  def rescuingly
+    debug "begin rescue block..."
+    begin
+      yield
+    rescue Exception => err
+      debug "rescuing #{err.message}"
+      @@error = err
+      visit '/error'
+    end
+    debug "end rescue block..."
+  end
+
+  # DISPLAY HELPER METHODS
+  
+  def page_box
+    st = nil
+    background black
+    stack  :margin => 20 do
+      background(randcolor(:dark), :curve => 20)
+      st = stack :margin => 20 do
+        yield if block_given?
+      end
+    end
+    st
+  end
+
+  def section_box
+    st = nil
+    stack :margin => 10 do
+      background randcolor(:light, 0.5), :curve => 20
+      st = stack :margin => 10 do
+        yield if block_given?
+      end
+    end
+    st
+  end
+
+  def chunk_section_box(text, hidden=true)
+    the_flow = nil
+    section_box do
+      flow(:click => Proc.new { the_flow.toggle },
+           :margin => 20
+           ) do 
+        background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 20
+        caption text, :align => 'right', :stroke => randcolor(:realdark), :margin => 20
+      end
+      the_flow = flow :hidden => hidden do
+        yield
+      end
+    end
+  end
+
+  def header_box(text = "")
+    linklist ||= @action_links
+    section_box do
+      flow do
+        flow( :width => -200) do
+          para *action_links
+        end
+        flow( :width => 200) do
+          tagline( text, :stroke => randcolor(:realdark), 
+                   :margin => 20, :align => 'right')
+        end
+      end
+    end
+  end
+
+  def chunk_box
+    stack :width => 200 do
+      background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 10, :margin => 20
+      stack :margin => 20 do
+        yield if block_given?
+      end
+    end
+  end
+
+  def randcolor(bias=nil, alpha = 1.0)
+    target, range = case bias
+                    when :dark: [ 0.3, 0.3 ]
+                    when :light: [0.8, 0.4]
+                    when :realdark: [ 0.1, 0.2]
+                    else [0.5, 0.6]
+                    end
+    r, g, b = [ ( (rand - 0.5) * range ) + target,
+                ( (rand - 0.5) * range ) + target,
+                ( (rand - 0.5) * range ) + target ]
+    
+    if @@gradients
+      rgb(r, g, b, alpha)..rgb(r, g, b, alpha * 0.3)
+    else
+      rgb(r, g, b, alpha)
+    end
+  end
+
+  # BBS INTERACTION HELPER METHODS
+
+  def recording_last_read(forum_id)
+    if should_record_last_read(forum_id)
+      clear do
+        page_box do
+          para "recording last read message..."
+        end
+      end
+      threadingly do
+        rescuingly do
+          record_last_read(forum_id)
+          yield
+        end
+      end
+    else
+      yield
+    end
+  end
+
+  def should_record_last_read(forum_id)
+    forum_id = forum_id.to_i
+    info "should_record_last_read for #{forum_id}"
+    cached = @@forum_cache[forum_id]
+    cached[:first_unread] != cached[:server_first_unread]
+  end
+
+  def record_last_read(forum_id)
+    forum_id = forum_id.to_i
+    info "record_last_read for #{forum_id}"
+    cached = @@forum_cache[forum_id]
+    forum = @@bbs.jump(forum_id)
+    forum.first_unread = cached[:first_unread]
+    cached[:server_first_unread] = cached[:first_unread]
+    
+    if cached[:first_unread] > cached[:noteids].last
+      @@bbs_cache[:todo].delete(forum_id)
+    end
+    
+    if cached[:first_unread] <= cached[:noteids].last
+      @@bbs_cache[:todo][forum_id] = @@bbs_cache[:all][forum_id]
+    end
+  end
+
+  def get_message(forum_id, msgnum)
+    msg = {}
+    post = @@bbs.jump(forum_id).read(msgnum)
+    [:date, :author, :body, :authority].each { |k| msg[k] = post.send(k) }
+    msg[:message_id] = msgnum
+    msg[:forum_id] = forum_id
+    msg
+  end
+
+  # KEYBOARD INTERACTION HELPER METHODS
+  
+  def add_actions( *actions)
+    @page_actions ||= []
+    @page_actions = @page_actions + actions
+  end
+  
+  def action_links
+    @page_actions ||= []
+    linklist = []
+    @page_actions.each do | item |
+      linklist << link(item[1], :click => item[2] )
+      linklist << " " unless item == @page_actions.last
+    end
+    linklist
+  end
+
+  def setup_keypress
+    @page_actions ||= []
+    keypress do | key |
+      found = @page_actions.assoc(key)
+      if found
+        action = found[2]
+        if action.respond_to? :call
+          action.call
+        else
+          info "visiting <#{action}>"
+          visit action
+        end
+      end
+    end
+  end
+
 end
 
 
