@@ -65,7 +65,7 @@ eof
     username, password = nil, nil
     YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
       username, password = store['username'], store['password']
-      @@config = store['config']
+      @@config = store['config'] || {}
     end
 
     if @@config['auto_login'] and username and password
