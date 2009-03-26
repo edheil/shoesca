@@ -39,6 +39,7 @@ eof
   url '/login', :login
   url '/error', :error
   url '/license', :license
+  url '/config', :config
   url '/enter_forum/(\d+)', :enter_forum
   url '/forum/(\d+)', :forum
   url '/leave_forum/(\d+)', :leave_forum
@@ -54,21 +55,30 @@ eof
   @@forum_cache = {}
   @@bbs_cache = {}
   @@use_threads = true
+  @@config = {}
 
   # PAGES
 
   def login
-    setup_keypress
+
     @@bbs = nil
     username, password = nil, nil
     YAML::Store.new('bbsconfig.yaml').transaction(true) do |store|
       username, password = store['username'], store['password']
+      @@config = store['config']
     end
+
+    if @@config['auto_login'] and username and password
+      visit "/do_login/#{username}/#{password}"
+    end
+
+    setup_keypress
 
     add_actions( ["\n", '[enter] login', Proc.new {
                      visit "/do_login/#{@username_line.text}/#{@password_line.text}"}
                   ],
                  ['l', '[l]icense', '/license'],
+                 ['c', '[c]onfig', '/config'],
                  ['q', '[q]uit', '/quit'] )
     
     @content = page_box do
@@ -91,17 +101,80 @@ eof
     end
     threadingly do
       rescuingly do
+        info "making connection"
         @@bbs = Raccdoc::Connection.new(:user => username, :password => password,
                                         :host => HOST,
                                         :port => PORT
                                         )
-        YAML::Store.new('bbsconfig.yaml').transaction do |store|
-          store['username'], store['password'] = username, password
-          visit '/load_bbs'
+        YAML::Store.new('bbsconfig.yaml').transaction do | store |
+          if @@config['save_username']
+            store['username']=username
+          else
+            store.delete('username')
+          end
+          if @@config['save_password']
+            store['password'] = password
+          else
+            store.delete('password')
+          end
         end
+        visit '/load_bbs'
       end
     end
   end
+
+  def config
+    setup_keypress
+    if @@bbs
+      add_actions ['b', '[b]ack to bbs', '/bbs']
+    else
+      add_actions ['b', '[b]ack to login', '/']
+    end
+    add_actions  ['q', '[q]uit', '/quit']
+    @c = {}
+    page_box do
+      header_box( "Configuration" )
+      section_box do
+        button "Save configuration", :align => 'right' do
+          YAML::Store.new('bbsconfig.yaml').transaction do |store|
+            store['config'] ||= {}
+            @c.each do | key, control |
+              store['config'][key] = @@config[key] = @c[key].checked
+            end
+          end
+          alert "configuration saved."
+        end
+      end
+      chunk_section_box("Login Configuration", true) do
+        @c['save_username'] =
+          option_box("save username") do | me | 
+          @auto_login.checked = false unless me.checked?
+        end
+        @c['save_password'] =
+          option_box("save password") do | me | 
+          @auto_login.checked = false unless me.checked?
+        end
+        @c['auto_login'] = 
+          option_box("log in automatically") do | me |
+          if me.checked?
+            @c['save_username'].checked = true
+            @c['save_password'].checked = true
+          end
+        end
+      end
+      chunk_section_box("Cosmetic Configuration", true) do
+        @c['gradients'] = option_box("gradients")
+        @c['white_bkg'] = option_box("white background")
+      end
+    end
+    YAML::Store.new('bbsconfig.yaml').transaction do |store|
+      @c.each do | key, control |
+        store['config'] ||= {}
+        @c[key].checked = store['config'][key]
+      end
+    end
+  end
+
 
   def error
     setup_keypress
@@ -157,7 +230,8 @@ eof
     else
       add_actions [ ' ', '[ ]refresh_forums', "/load_bbs"]
     end
-    add_actions [ 'q', '[q]uit', '/quit' ]
+    add_actions (['c', '[c]onfig', '/config'],
+                 [ 'q', '[q]uit', '/quit' ])
 
     page_box do
       header_box( "Forums")
@@ -523,7 +597,11 @@ eof
   
   def page_box
     st = nil
-    background black
+    if @@config['white_bkg']
+      background white
+    else
+      background black
+    end
     stack  :margin => 20 do
       background(randcolor(:dark), :curve => 20)
       st = stack :margin => 20 do
@@ -574,6 +652,17 @@ eof
     end
   end
 
+  def option_box(text)
+    the_check = nil
+    chunk_box do
+      flow do
+        the_check = check { | me | yield me }
+        para text
+      end
+    end
+    the_check
+  end
+
   def chunk_box
     stack :width => 200 do
       background rgb(1.0, 1.0, 1.0, 0.5)..rgb(1.0, 1.0, 1.0, 0.2), :curve => 10, :margin => 20
@@ -594,7 +683,7 @@ eof
                 ( (rand - 0.5) * range ) + target,
                 ( (rand - 0.5) * range ) + target ]
     
-    if @@gradients
+    if @@config['gradients']
       rgb(r, g, b, alpha)..rgb(r, g, b, alpha * 0.3)
     else
       rgb(r, g, b, alpha)
